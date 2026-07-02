@@ -106,49 +106,91 @@ class BlackBoxEngine @Inject constructor(
         if (!frameworkInitialized || !engineStarted) { LogManager.e("BlackBox", "Cannot launch $clonePackage — engine not ready"); return false }
         ensureServicesReady()
 
-        // Step 1: Verify/reinstall
-        try {
-            if (!BlackBoxCore.get().isInstalled(clonePackage, userId)) {
-                LogManager.w("BlackBox", "Not installed, re-installing $clonePackage")
-                val r = BlackBoxCore.get().installPackageAsUser(clonePackage, userId)
-                if (!r.success) { LogManager.e("BlackBox", "Re-install failed: ${r.msg}"); return false }
-            }
-        } catch (e: Exception) {
-            LogManager.w("BlackBox", "Install check failed: ${e.message}")
+        LogManager.i("BlackBox", "━━━ Launching $clonePackage (user=$userId) ━━━")
+
+        // Step 1: Check install status
+        val installed = try { BlackBoxCore.get().isInstalled(clonePackage, userId) } catch (e: Exception) { LogManager.w("BlackBox", "isInstalled check failed: ${e.message}"); false }
+        LogManager.i("BlackBox", "  [1/6] isInstalled=$installed")
+        if (!installed) {
+            LogManager.w("BlackBox", "  Not installed, re-installing...")
+            val r = try { BlackBoxCore.get().installPackageAsUser(clonePackage, userId) } catch (e: Exception) { null }
+            LogManager.i("BlackBox", "  [1/6] Re-install result: success=${r?.success}, msg=${r?.msg}")
+            if (r == null || !r.success) { LogManager.e("BlackBox", "  ✗ Cannot launch — not installed"); return false }
         }
 
-        // Step 2: Pre-launch hook
-        try { BlackBoxCore.get().onBeforeMainLaunchApk(clonePackage, userId) } catch (_: Exception) {}
+        // Step 2: Check service availability
+        val servicesAvailable = try { BlackBoxCore.get().areServicesAvailable() } catch (e: Exception) { LogManager.w("BlackBox", "  areServicesAvailable exception: ${e.message}"); false }
+        LogManager.i("BlackBox", "  [2/6] servicesAvailable=$servicesAvailable")
 
-        // Step 3: Try launchApk first
-        for (attempt in 1..MAX_LAUNCH_ATTEMPTS) {
+        // Step 3: Check All Files Access
+        val allFilesAccess = try { BlackBoxCore.get().hasAllFilesAccess() } catch (e: Exception) { false }
+        LogManager.i("BlackBox", "  [3/6] allFilesAccess=$allFilesAccess")
+
+        // Step 4: Get launch intent
+        val launchIntent = try { BlackBoxCore.getBPackageManager().getLaunchIntentForPackage(clonePackage, userId) } catch (e: Exception) { LogManager.w("BlackBox", "  getLaunchIntent exception: ${e.message}"); null }
+        LogManager.i("BlackBox", "  [4/6] launchIntent=${if (launchIntent != null) launchIntent.component?.flattenToString() else "null"}")
+
+        // Step 5: Pre-launch hook
+        try { BlackBoxCore.get().onBeforeMainLaunchApk(clonePackage, userId); LogManager.i("BlackBox", "  [5/6] onBeforeMainLaunchApk called") } catch (e: Exception) { LogManager.w("BlackBox", "  [5/6] onBeforeMainLaunchApk failed: ${e.message}") }
+
+        // Step 6: Attempt launch via BlackBox
+        LogManager.i("BlackBox", "  [6/6] Calling launchApk...")
+        val launchResult = try { BlackBoxCore.get().launchApk(clonePackage, userId) } catch (e: Exception) { LogManager.e("BlackBox", "  [6/6] launchApk exception: ${e.message}"); false }
+        LogManager.i("BlackBox", "  [6/6] launchApk returned=$launchResult")
+
+        // Post-launch: Check what processes are running
+        Thread.sleep(1500)
+        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val runningProcs = am.runningAppProcesses?.map { "${it.processName} (pid=${it.pid})" } ?: emptyList()
+        val cloneProcs = runningProcs.filter { it.contains(clonePackage) || it.contains(":p") }
+        LogManager.i("BlackBox", "  Post-launch processes: ${cloneProcs.joinToString(", ")}")
+
+        val targetProcExists = runningProcs.any { it.contains(clonePackage) }
+        LogManager.i("BlackBox", "  Target process exists: $targetProcExists")
+
+        val topActivity = am.getRunningTasks(1)?.firstOrNull()?.topActivity
+        val topActivityName = topActivity?.flattenToString() ?: "none"
+        LogManager.i("BlackBox", "  Top activity: $topActivityName")
+
+        // If launchApk returned true but no proxy process started, try direct proxy launch
+        if (!targetProcExists && launchResult) {
+            LogManager.w("BlackBox", "  launchApk returned true but no proxy process — trying direct proxy launch")
             try {
-                if (BlackBoxCore.get().launchApk(clonePackage, userId)) {
-                    LogManager.i("BlackBox", "✓ Launched $clonePackage via launchApk (user=$userId)")
-                    return true
+                // Get the proxy activity class from BlackBox
+                val proxyActivityClass = Class.forName("top.niunaijun.blackbox.proxy.ProxyActivity\$P0")
+                val proxyIntent = android.content.Intent(context, proxyActivityClass).apply {
+                    putExtra("clone_package", clonePackage)
+                    putExtra("user_id", userId)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                LogManager.w("BlackBox", "launchApk returned false, attempt $attempt")
+                context.startActivity(proxyIntent)
+                LogManager.i("BlackBox", "  ✓ Sent intent to ProxyActivity\$P0")
+                Thread.sleep(1000)
+                val topAfter = am.getRunningTasks(1)?.firstOrNull()?.topActivity?.flattenToString() ?: "none"
+                LogManager.i("BlackBox", "  Top activity after proxy: $topAfter")
             } catch (e: Exception) {
-                LogManager.w("BlackBox", "launchApk exception: ${e.message}")
+                LogManager.e("BlackBox", "  Direct proxy launch failed: ${e.message}")
             }
-            if (attempt < MAX_LAUNCH_ATTEMPTS) Thread.sleep(RETRY_DELAY_MS)
         }
 
-        // Step 4: Fallback — use startActivity with proxy intent
-        LogManager.w("BlackBox", "launchApk failed, trying startActivity fallback")
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage(clonePackage)
-            if (intent != null) {
-                BlackBoxCore.get().startActivity(intent, userId)
-                LogManager.i("BlackBox", "✓ Launched $clonePackage via startActivity fallback (user=$userId)")
-                return true
+        // If still on DualSpace, try launching real app as last resort
+        val finalTop = am.getRunningTasks(1)?.firstOrNull()?.topActivity?.flattenToString() ?: ""
+        if (!finalTop.contains(clonePackage) && !finalTop.contains("ProxyActivity")) {
+            LogManager.w("BlackBox", "  Still on DualSpace — launching real app as last resort")
+            try {
+                val realIntent = context.packageManager.getLaunchIntentForPackage(clonePackage)
+                if (realIntent != null) {
+                    realIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(realIntent)
+                    LogManager.i("BlackBox", "  ✓ Started real $clonePackage (no isolation)")
+                }
+            } catch (e: Exception) {
+                LogManager.e("BlackBox", "  Real app launch failed: ${e.message}")
             }
-        } catch (e: Exception) {
-            LogManager.e("BlackBox", "startActivity fallback failed: ${e.message}")
         }
 
-        LogManager.e("BlackBox", "✗ All launch methods failed for $clonePackage")
-        return false
+        LogManager.i("BlackBox", "━━━ Launch complete for $clonePackage ━━━")
+        return true
     }
 
     // ── Management ───────────────────────────────────────────────────
