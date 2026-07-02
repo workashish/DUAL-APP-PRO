@@ -1,19 +1,19 @@
 package com.utility.toolbox.service
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.os.UserHandle
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import top.niunaijun.blackbox.BlackBoxCore
 import top.niunaijun.blackbox.entity.pm.InstallResult
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Each clone gets its own BlackBox userId with unique spoofed identity.
- * No workspace concept — every clone is a standalone virtual device.
- */
 @Singleton
 class BlackBoxEngine @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -34,11 +34,9 @@ class BlackBoxEngine @Inject constructor(
         fun getInstance(context: Context): BlackBoxEngine {
             val appContext = context.applicationContext ?: context
             return Holder.instance ?: synchronized(this) {
-                Holder.instance ?: BlackBoxEngine(appContext, AntiDetectionManager.getInstance(appContext))
-                    .also { Holder.instance = it }
+                Holder.instance ?: BlackBoxEngine(appContext, AntiDetectionManager.getInstance(appContext)).also { Holder.instance = it }
             }
         }
-
         internal fun resetInstanceForTest() { Holder.instance = null }
         private object Holder { @Volatile var instance: BlackBoxEngine? = null }
     }
@@ -48,8 +46,8 @@ class BlackBoxEngine @Inject constructor(
         val deviceFingerprint: String, val deviceSerial: String, val gsfId: String,
         val imei: String, val macAddress: String
     )
-
     data class CloneResult(val success: Boolean, val packageName: String?, val error: String? = null)
+    data class InstalledAppInfo(val packageName: String, val versionName: String, val versionCode: Long, val isSystemApp: Boolean)
 
     fun isInitialized(): Boolean = frameworkInitialized
     fun isEngineStarted(): Boolean = engineStarted
@@ -60,34 +58,20 @@ class BlackBoxEngine @Inject constructor(
             BlackBoxCore.get().doCreate()
             antiDetectionManager.initialize()
             engineStarted = true
-            Log.i(TAG, "BlackBox engine started")
+            Log.i(TAG, "Engine started")
         } catch (e: Exception) { Log.e(TAG, "Engine start failed", e) }
     }
-
-    // ── Install ──────────────────────────────────────────────────────
 
     fun installClone(packageName: String, userId: Int): CloneResult {
         if (!frameworkInitialized || !engineStarted) return CloneResult(false, null, "Engine not ready")
         ensureServicesReady()
         try {
-            if (BlackBoxCore.get().isInstalled(packageName, userId)) {
-                LogManager.i("BlackBox", "Already installed: $packageName (user=$userId)")
-                return CloneResult(true, packageName)
-            }
+            if (BlackBoxCore.get().isInstalled(packageName, userId)) return CloneResult(true, packageName)
         } catch (_: Exception) {}
         return try {
-            val result: InstallResult = BlackBoxCore.get().installPackageAsUser(packageName, userId)
-            if (result.success) {
-                LogManager.i("BlackBox", "✓ Installed $packageName (user=$userId)")
-                CloneResult(true, result.packageName ?: packageName)
-            } else {
-                LogManager.e("BlackBox", "✗ Install failed: ${result.msg}")
-                CloneResult(false, null, result.msg)
-            }
-        } catch (e: Exception) {
-            LogManager.e("BlackBox", "✗ Install exception: ${e.message}")
-            CloneResult(false, null, e.message)
-        }
+            val r: InstallResult = BlackBoxCore.get().installPackageAsUser(packageName, userId)
+            if (r.success) CloneResult(true, r.packageName ?: packageName) else CloneResult(false, null, r.msg)
+        } catch (e: Exception) { CloneResult(false, null, e.message) }
     }
 
     fun installCloneFromFile(apkFile: java.io.File, userId: Int): CloneResult {
@@ -95,165 +79,184 @@ class BlackBoxEngine @Inject constructor(
         if (!apkFile.exists()) return CloneResult(false, null, "APK not found")
         ensureServicesReady()
         return try {
-            val result = BlackBoxCore.get().installPackageAsUser(apkFile, userId)
-            if (result.success) CloneResult(true, result.packageName) else CloneResult(false, null, result.msg)
+            val r = BlackBoxCore.get().installPackageAsUser(apkFile, userId)
+            if (r.success) CloneResult(true, r.packageName) else CloneResult(false, null, r.msg)
         } catch (e: Exception) { CloneResult(false, null, e.message) }
     }
 
-    // ── Launch ───────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    // LAUNCH — 4 strategies, tried in order until one works
+    // ═══════════════════════════════════════════════════════════════════
 
     fun launchClone(clonePackage: String, userId: Int): Boolean {
-        if (!frameworkInitialized || !engineStarted) { LogManager.e("BlackBox", "Cannot launch $clonePackage — engine not ready"); return false }
+        if (!frameworkInitialized || !engineStarted) { LogManager.e("BlackBox", "Engine not ready"); return false }
         ensureServicesReady()
+        LogManager.i("BlackBox", "━━━ Launch $clonePackage (user=$userId) ━━━")
 
-        LogManager.i("BlackBox", "━━━ Launching $clonePackage (user=$userId) ━━━")
-
-        // Pre-flight checks
+        // Verify installed
         val installed = try { BlackBoxCore.get().isInstalled(clonePackage, userId) } catch (_: Exception) { false }
-        LogManager.i("BlackBox", "  isInstalled=$installed, services=${try { BlackBoxCore.get().areServicesAvailable() } catch (_: Exception) { false }}, allFiles=${try { BlackBoxCore.get().hasAllFilesAccess() } catch (_: Exception) { false }}")
         if (!installed) {
             val r = try { BlackBoxCore.get().installPackageAsUser(clonePackage, userId) } catch (_: Exception) { null }
-            if (r == null || !r.success) { LogManager.e("BlackBox", "  ✗ Not installed and reinstall failed"); return false }
+            if (r == null || !r.success) { LogManager.e("BlackBox", "Not installed, reinstall failed"); return false }
         }
 
-        // Step 1: Try BlackBox launchApk (goes through proxy)
-        try { BlackBoxCore.get().onBeforeMainLaunchApk(clonePackage, userId) } catch (_: Exception) {}
-        val launchResult = try { BlackBoxCore.get().launchApk(clonePackage, userId) } catch (_: Exception) { false }
-        LogManager.i("BlackBox", "  launchApk=$launchResult")
+        // Strategy 1: am start --user via Runtime.exec (most reliable on OPPO)
+        if (launchViaAmStart(clonePackage, userId)) return true
 
-        // Check if proxy actually started the activity
-        Thread.sleep(1500)
-        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-        val topActivity = am.getRunningTasks(1)?.firstOrNull()?.topActivity?.flattenToString() ?: ""
-        val proxyWorking = topActivity.contains(clonePackage) || topActivity.contains("ProxyActivity")
-        LogManager.i("BlackBox", "  Top activity: $topActivity, proxyWorking=$proxyWorking")
+        // Strategy 2: BlackBox's internal launchApk (goes through proxy)
+        if (launchViaBlackBoxInternal(clonePackage, userId)) return true
 
-        if (proxyWorking) {
-            LogManager.i("BlackBox", "  ✓ Proxy launched successfully")
-            LogManager.i("BlackBox", "━━━ Complete ━━━")
-            return true
-        }
+        // Strategy 3: Direct shadow intent with proper extras
+        if (launchViaShadowIntent(clonePackage, userId)) return true
 
-        // Step 2: Try using BlackBox's startActivity with proper intent
-        LogManager.w("BlackBox", "  Proxy didn't work, trying direct BlackBox startActivity")
+        // Strategy 4: Real app fallback
+        LogManager.w("BlackBox", "All proxy methods failed — launching real app")
         try {
             val intent = context.packageManager.getLaunchIntentForPackage(clonePackage)
-            if (intent != null) {
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                BlackBoxCore.get().startActivity(intent, userId)
-                LogManager.i("BlackBox", "  ✓ BlackBox.startActivity sent")
-
-                Thread.sleep(1500)
-                val topAfter = am.getRunningTasks(1)?.firstOrNull()?.topActivity?.flattenToString() ?: ""
-                LogManager.i("BlackBox", "  Top after startActivity: $topAfter")
-
-                if (topAfter.contains(clonePackage)) {
-                    LogManager.i("BlackBox", "  ✓ BlackBox.startActivity worked!")
-                    LogManager.i("BlackBox", "━━━ Complete ━━━")
-                    return true
-                }
-            }
-        } catch (e: Exception) {
-            LogManager.w("BlackBox", "  BlackBox.startActivity failed: ${e.message}")
-        }
-
-        // Step 3: Try launching through ProxyPendingActivity (delayed intent)
-        LogManager.w("BlackBox", "  Trying ProxyPendingActivity")
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage(clonePackage)
-            if (intent != null) {
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                val pendingClass = Class.forName("top.niunaijun.blackbox.proxy.ProxyPendingActivity${'$'}P0")
-                val pendingIntent = android.content.Intent(context, pendingClass).apply {
-                    putExtra("_B_|_user_id_", userId)
-                    putExtra("_B_|_target_", intent)
-                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(pendingIntent)
-                LogManager.i("BlackBox", "  ✓ ProxyPendingActivity intent sent")
-
-                Thread.sleep(1500)
-                val topAfter = am.getRunningTasks(1)?.firstOrNull()?.topActivity?.flattenToString() ?: ""
-                LogManager.i("BlackBox", "  Top after pending: $topAfter")
-
-                if (topAfter.contains(clonePackage)) {
-                    LogManager.i("BlackBox", "  ✓ ProxyPendingActivity worked!")
-                    LogManager.i("BlackBox", "━━━ Complete ━━━")
-                    return true
-                }
-            }
-        } catch (e: Exception) {
-            LogManager.w("BlackBox", "  ProxyPendingActivity failed: ${e.message}")
-        }
-
-        // Step 4: Last resort — launch real app (no isolation)
-        LogManager.w("BlackBox", "  All proxy methods failed — launching real app (no isolation)")
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage(clonePackage)
-            if (intent != null) {
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-                LogManager.i("BlackBox", "  ✓ Started real $clonePackage")
-            }
-        } catch (e: Exception) {
-            LogManager.e("BlackBox", "  ✗ All methods failed: ${e.message}")
-        }
-
+            if (intent != null) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(intent) }
+        } catch (e: Exception) { LogManager.e("BlackBox", "Real app launch failed: ${e.message}") }
         LogManager.i("BlackBox", "━━━ Complete ━━━")
         return true
     }
 
-    // ── Management ───────────────────────────────────────────────────
+    /**
+     * Strategy 1: Use Android's am command to start activity as target user.
+     * This bypasses BlackBox's proxy system entirely.
+     * am start --user N -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n pkg/activity
+     */
+    private fun launchViaAmStart(clonePackage: String, userId: Int): Boolean {
+        try {
+            // Resolve the launch activity
+            val intent = BlackBoxCore.getBPackageManager().getLaunchIntentForPackage(clonePackage, userId)
+            val component = intent?.component ?: run {
+                // Fallback: query from host PM
+                context.packageManager.getLaunchIntentForPackage(clonePackage)?.component
+            }
+            if (component == null) { LogManager.w("BlackBox", "[am] No launch component for $clonePackage"); return false }
+
+            val cmd = "am start --user $userId -n ${component.flattenToString()} -a android.intent.action.MAIN -c android.intent.category.LAUNCHER"
+            LogManager.i("BlackBox", "[am] Executing: $cmd")
+
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+            val exitCode = process.waitFor()
+            val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
+            val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
+
+            LogManager.i("BlackBox", "[am] exit=$exitCode, stdout=$stdout, stderr=$stderr")
+
+            if (exitCode == 0 && stdout.contains("Status: ok")) {
+                Thread.sleep(1500)
+                val top = getTopActivity()
+                val working = top.contains(clonePackage)
+                LogManager.i("BlackBox", "[am] Top=$top, working=$working")
+                if (working) {
+                    LogManager.i("BlackBox", "✓ Launched via am start --user")
+                    LogManager.i("BlackBox", "━━━ Complete ━━━")
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            LogManager.w("BlackBox", "[am] Failed: ${e.message}")
+        }
+        return false
+    }
+
+    /**
+     * Strategy 2: Use BlackBox's internal launchApk which goes through the proxy system.
+     */
+    private fun launchViaBlackBoxInternal(clonePackage: String, userId: Int): Boolean {
+        try {
+            BlackBoxCore.get().onBeforeMainLaunchApk(clonePackage, userId)
+            val result = BlackBoxCore.get().launchApk(clonePackage, userId)
+            LogManager.i("BlackBox", "[internal] launchApk=$result")
+
+            Thread.sleep(2000)
+            val top = getTopActivity()
+            val working = top.contains(clonePackage) || top.contains("ProxyActivity")
+            LogManager.i("BlackBox", "[internal] Top=$top, working=$working")
+            if (working) {
+                LogManager.i("BlackBox", "✓ Launched via BlackBox internal")
+                LogManager.i("BlackBox", "━━━ Complete ━━━")
+                return true
+            }
+        } catch (e: Exception) {
+            LogManager.w("BlackBox", "[internal] Failed: ${e.message}")
+        }
+        return false
+    }
+
+    /**
+     * Strategy 3: Create shadow intent with all required extras and start ProxyActivity directly.
+     */
+    private fun launchViaShadowIntent(clonePackage: String, userId: Int): Boolean {
+        try {
+            val launchIntent = BlackBoxCore.getBPackageManager().getLaunchIntentForPackage(clonePackage, userId)
+                ?: context.packageManager.getLaunchIntentForPackage(clonePackage)
+            if (launchIntent == null) { LogManager.w("BlackBox", "[shadow] No launch intent"); return false }
+
+            val targetComponent = launchIntent.component
+            if (targetComponent == null) { LogManager.w("BlackBox", "[shadow] No component"); return false }
+
+            // Get ActivityInfo through virtual PM
+            val activityInfo = try {
+                BlackBoxCore.getBPackageManager().getActivityInfo(targetComponent, 0, userId)
+            } catch (_: Exception) {
+                try { context.packageManager.getActivityInfo(targetComponent, 0) } catch (_: Exception) { null }
+            }
+            if (activityInfo == null) { LogManager.w("BlackBox", "[shadow] No ActivityInfo for $targetComponent"); return false }
+
+            // Create shadow intent with proper extras matching ProxyActivityRecord format
+            val proxyClass = Class.forName("top.niunaijun.blackbox.proxy.ProxyActivity\$P0")
+            val shadow = Intent(context, proxyClass).apply {
+                putExtra("_B|_activity_info_", activityInfo as android.os.Parcelable)
+                putExtra("_B|_target_", launchIntent as android.os.Parcelable)
+                putExtra("_B|_user_id_", userId)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+
+            LogManager.i("BlackBox", "[shadow] Starting ProxyActivity → ${targetComponent.flattenToString()}")
+            context.startActivity(shadow)
+
+            Thread.sleep(2000)
+            val top = getTopActivity()
+            val working = top.contains(clonePackage) || top.contains("ProxyActivity")
+            LogManager.i("BlackBox", "[shadow] Top=$top, working=$working")
+            if (working) {
+                LogManager.i("BlackBox", "✓ Launched via shadow intent")
+                LogManager.i("BlackBox", "━━━ Complete ━━━")
+                return true
+            }
+        } catch (e: Exception) {
+            LogManager.w("BlackBox", "[shadow] Failed: ${e.message}")
+        }
+        return false
+    }
+
+    private fun getTopActivity(): String {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        return am.getRunningTasks(1)?.firstOrNull()?.topActivity?.flattenToString() ?: ""
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════
 
     fun uninstallClone(clonePackage: String, userId: Int): Boolean {
         if (!frameworkInitialized) return false
         return try {
             try { BlackBoxCore.get().clearPackage(clonePackage, userId) } catch (_: Exception) {}
-            BlackBoxCore.get().uninstallPackageAsUser(clonePackage, userId)
-            LogManager.i("BlackBox", "✓ Uninstalled $clonePackage (user=$userId)"); true
-        } catch (e: Exception) { LogManager.e("BlackBox", "✗ Uninstall failed: ${e.message}"); false }
+            BlackBoxCore.get().uninstallPackageAsUser(clonePackage, userId); true
+        } catch (e: Exception) { LogManager.e("BlackBox", "Uninstall failed: ${e.message}"); false }
     }
 
     fun stopClone(clonePackage: String, userId: Int): Boolean {
         if (!frameworkInitialized) return false
-        return try {
-            BlackBoxCore.get().stopPackage(clonePackage, userId)
-            LogManager.i("BlackBox", "✓ Stopped $clonePackage (user=$userId)"); true
-        } catch (e: Exception) {
-            LogManager.e("BlackBox", "✗ Stop failed: ${e.message}"); false
-        }
-    }
-
-    fun killCloneProcess(clonePackage: String) {
-        try {
-            val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            am.killBackgroundProcesses(clonePackage)
-            LogManager.i("BlackBox", "✓ Killed process for $clonePackage")
-        } catch (e: Exception) {
-            LogManager.w("BlackBox", "Failed to kill process: ${e.message}")
-        }
-    }
-
-    fun killAllCloneProcesses() {
-        try {
-            val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            am.runningAppProcesses?.forEach { proc ->
-                if (proc.processName.contains(":p") || proc.processName.contains(":black")) {
-                    am.killBackgroundProcesses(proc.processName)
-                    LogManager.i("BlackBox", "Killed process: ${proc.processName}")
-                }
-            }
-        } catch (e: Exception) {
-            LogManager.w("BlackBox", "Failed to kill all processes: ${e.message}")
-        }
+        return try { BlackBoxCore.get().stopPackage(clonePackage, userId); true } catch (_: Exception) { false }
     }
 
     fun clearCloneData(clonePackage: String, userId: Int): Boolean {
         if (!frameworkInitialized) return false
-        return try {
-            BlackBoxCore.get().clearPackage(clonePackage, userId)
-            LogManager.i("BlackBox", "✓ Cleared data for $clonePackage (user=$userId)"); true
-        } catch (e: Exception) { LogManager.e("BlackBox", "✗ Clear failed: ${e.message}"); false }
+        return try { BlackBoxCore.get().clearPackage(clonePackage, userId); true } catch (_: Exception) { false }
     }
 
     fun isCloneInstalled(clonePackage: String, userId: Int): Boolean {
@@ -261,22 +264,14 @@ class BlackBoxEngine @Inject constructor(
         return try { BlackBoxCore.get().isInstalled(clonePackage, userId) } catch (_: Exception) { false }
     }
 
-    // ── GMS Per Clone ────────────────────────────────────────────────
-
     fun installGms(userId: Int): Boolean {
         if (!frameworkInitialized) return false
-        return try {
-            val ok = BlackBoxCore.get().installGms(userId).success
-            LogManager.i("BlackBox", if (ok) "✓ GMS installed (user=$userId)" else "✗ GMS install failed"); ok
-        } catch (e: Exception) { LogManager.e("BlackBox", "✗ GMS exception: ${e.message}"); false }
+        return try { BlackBoxCore.get().installGms(userId).success } catch (_: Exception) { false }
     }
 
     fun uninstallGms(userId: Int): Boolean {
         if (!frameworkInitialized) return false
-        return try {
-            val ok = BlackBoxCore.get().uninstallGms(userId)
-            LogManager.i("BlackBox", if (ok) "✓ GMS removed (user=$userId)" else "✗ GMS remove failed"); ok
-        } catch (e: Exception) { LogManager.e("BlackBox", "✗ GMS exception: ${e.message}"); false }
+        return try { BlackBoxCore.get().uninstallGms(userId) } catch (_: Exception) { false }
     }
 
     fun isGmsInstalled(userId: Int): Boolean {
@@ -285,8 +280,6 @@ class BlackBoxEngine @Inject constructor(
     }
 
     fun isGmsSupported(): Boolean = try { BlackBoxCore.get().isSupportGms() } catch (_: Exception) { false }
-
-    // ── User Management ──────────────────────────────────────────────
 
     fun createUser(userId: Int): Boolean {
         if (!frameworkInitialized) return false
@@ -305,47 +298,11 @@ class BlackBoxEngine @Inject constructor(
         return id
     }
 
-    // ── Identity Generation ──────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    // IDENTITY GENERATION
+    // ═══════════════════════════════════════════════════════════════════
 
-    fun generateIdentity(userId: Int): DeviceIdentity {
-        val secureRandom = SecureRandom()
-        val profile = deviceProfiles[userId % deviceProfiles.size]
-
-        val androidIdBytes = ByteArray(8).also { secureRandom.nextBytes(it) }
-        val androidId = androidIdBytes.joinToString("") { "%02x".format(it) }
-
-        val serialBytes = ByteArray(8).also { secureRandom.nextBytes(it) }
-        val serial = "RF${serialBytes.joinToString("") { "%02X".format(it) }}".take(16)
-
-        val imeiMid = String.format("%010d", (userId * 100000L + (secureRandom.nextLong() and 0xFFFFF)))
-        val imeiRaw = "35$imeiMid"
-        val imeiCheck = calculateLuhnCheckDigit(imeiRaw)
-        val imei = "$imeiMid$imeiCheck".take(15)
-
-        val macBytes = ByteArray(6).also { secureRandom.nextBytes(it) }
-        macBytes[0] = (macBytes[0].toInt() and 0xFE).toByte()
-        val mac = macBytes.joinToString(":") { "%02X".format(it) }
-
-        val gsfBytes = ByteArray(8).also { secureRandom.nextBytes(it) }
-        val gsfId = gsfBytes.joinToString("") { "%02X".format(it) }.take(16)
-
-        val sdkVersion = listOf(34, 33, 35).random()
-        val androidVer = when (sdkVersion) { 35 -> "15"; 33 -> "13"; else -> "14" }
-        val buildId = "BP${String.format("%011d", secureRandom.nextLong() and 0xFFFFFFFFFF)}"
-        val fingerprint = "${profile.brand}/${profile.device}/${profile.device}:${androidVer}/$buildId:user/release-keys"
-
-        return DeviceIdentity(androidId, profile.model, profile.brand, fingerprint, serial, gsfId, imei, mac)
-    }
-
-    private fun calculateLuhnCheckDigit(digits: String): Int {
-        var sum = 0; var alt = true
-        for (i in digits.indices.reversed()) {
-            var n = digits[i] - '0'
-            if (alt) { n *= 2; if (n > 9) n -= 9 }
-            sum += n; alt = !alt
-        }
-        return (10 - (sum % 10)) % 10
-    }
+    private val secureRandom = SecureRandom()
 
     private data class DeviceProfile(val brand: String, val model: String, val device: String, val hardware: String, val bootloader: String)
 
@@ -367,7 +324,32 @@ class BlackBoxEngine @Inject constructor(
         DeviceProfile("google", "Pixel 9", "caiman", "gs201", "caiman-15.0-11214666")
     )
 
-    // ── Helpers ──────────────────────────────────────────────────────
+    fun generateIdentity(userId: Int): DeviceIdentity {
+        val profile = deviceProfiles[userId % deviceProfiles.size]
+        val androidIdBytes = ByteArray(8).also { secureRandom.nextBytes(it) }
+        val androidId = androidIdBytes.joinToString("") { "%02x".format(it) }
+        val serialBytes = ByteArray(8).also { secureRandom.nextBytes(it) }
+        val serial = "RF${serialBytes.joinToString("") { "%02X".format(it) }}".take(16)
+        val imeiMid = String.format("%010d", (userId * 100000L + (secureRandom.nextLong() and 0xFFFFF)))
+        val imeiRaw = "35$imeiMid"
+        val imei = "$imeiMid${calculateLuhnCheckDigit(imeiRaw)}".take(15)
+        val macBytes = ByteArray(6).also { secureRandom.nextBytes(it) }
+        macBytes[0] = (macBytes[0].toInt() and 0xFE).toByte()
+        val mac = macBytes.joinToString(":") { "%02X".format(it) }
+        val gsfBytes = ByteArray(8).also { secureRandom.nextBytes(it) }
+        val gsfId = gsfBytes.joinToString("") { "%02X".format(it) }.take(16)
+        val sdkVersion = listOf(34, 33, 35).random()
+        val androidVer = when (sdkVersion) { 35 -> "15"; 33 -> "13"; else -> "14" }
+        val buildId = "BP${String.format("%011d", secureRandom.nextLong() and 0xFFFFFFFFFF)}"
+        val fingerprint = "${profile.brand}/${profile.device}/${profile.device}:${androidVer}/$buildId:user/release-keys"
+        return DeviceIdentity(androidId, profile.model, profile.brand, fingerprint, serial, gsfId, imei, mac)
+    }
+
+    private fun calculateLuhnCheckDigit(digits: String): Int {
+        var sum = 0; var alt = true
+        for (i in digits.indices.reversed()) { var n = digits[i] - '0'; if (alt) { n *= 2; if (n > 9) n -= 9 }; sum += n; alt = !alt }
+        return (10 - (sum % 10)) % 10
+    }
 
     private fun ensureServicesReady() {
         try { if (!BlackBoxCore.get().areServicesAvailable()) BlackBoxCore.get().waitForServicesAvailable(5000) } catch (_: Exception) {}
@@ -376,4 +358,16 @@ class BlackBoxEngine @Inject constructor(
     fun getAntiDetectionManager(): AntiDetectionManager = antiDetectionManager
     fun runDetectionAudit(): Map<String, String> = antiDetectionManager.runFullDetectionAudit()
     fun getSecurityScore(): Int = antiDetectionManager.getSecurityScore()
+
+    fun killAllCloneProcesses() {
+        try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            am.runningAppProcesses?.forEach { proc ->
+                if (proc.processName.contains(":p") || proc.processName.contains(":black")) {
+                    am.killBackgroundProcesses(proc.processName)
+                    LogManager.i("BlackBox", "Killed process: ${proc.processName}")
+                }
+            }
+        } catch (e: Exception) { LogManager.w("BlackBox", "Failed to kill all processes: ${e.message}") }
+    }
 }
