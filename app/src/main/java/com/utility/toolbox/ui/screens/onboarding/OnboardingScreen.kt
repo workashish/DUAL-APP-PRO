@@ -58,8 +58,8 @@ fun OnboardingScreen(
 ) {
     val pages = listOf(
         OnboardingPage(
-            title = "Multiple Workspaces",
-            description = "Create separate workspaces for work, games, and personal apps. Each workspace is completely isolated.",
+            title = "Multiple Clones",
+            description = "Clone any app multiple times. Each clone gets its own unique device identity and isolated data.",
             icon = Icons.Default.Workspaces,
             color = Color(0xFF7C4DFF)
         ),

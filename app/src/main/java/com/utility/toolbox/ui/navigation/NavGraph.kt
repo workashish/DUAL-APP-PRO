@@ -15,7 +15,6 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
-import com.utility.toolbox.service.BlackBoxEngine
 import com.utility.toolbox.ui.screens.clone.CloneScreen
 import com.utility.toolbox.ui.screens.customize.CustomizeScreen
 import com.utility.toolbox.ui.screens.deviceinfo.DeviceInfoScreen
@@ -28,133 +27,52 @@ import com.utility.toolbox.ui.screens.logviewer.LogViewerScreen
 import com.utility.toolbox.ui.screens.onboarding.OnboardingScreen
 import com.utility.toolbox.ui.screens.settings.SettingsScreen
 
-/**
- * Navigation graph for DualApps/Toolbox.
- *
- * Screens now use their own ViewModels to load real data from the repository.
- */
 @Composable
 fun NavGraph(
     navController: NavHostController,
-    blackBoxEngine: BlackBoxEngine? = null,
     modifier: Modifier = Modifier
 ) {
-    NavHost(
-        navController = navController,
-        startDestination = Screen.Home.route,
-        modifier = modifier
-    ) {
-        composable(Screen.Home.route) {
-            HomeScreen(navController = navController)
+    NavHost(navController = navController, startDestination = Screen.Home.route, modifier = modifier) {
+        composable(Screen.Home.route) { HomeScreen(navController = navController) }
+        composable(Screen.Clone.route) { CloneScreen(navController = navController) }
+        composable(Screen.Settings.route) { SettingsScreen(navController = navController) }
+
+        composable(Screen.Customize.route, arguments = listOf(navArgument("appId") { type = NavType.LongType })) { back ->
+            val appId = back.arguments?.getLong("appId") ?: return@composable
+            CustomizeScreen(appId = appId, onBack = { navController.popBackStack() })
         }
 
-        composable(Screen.Clone.route) {
-            CloneScreen(navController = navController)
-        }
-
-        composable(Screen.Settings.route) {
-            SettingsScreen(navController = navController)
-        }
-
-        composable(
-            route = Screen.Customize.route,
-            arguments = listOf(navArgument("appId") { type = NavType.LongType })
-        ) { backStackEntry ->
-            val appId = backStackEntry.arguments?.getLong("appId") ?: return@composable
-            CustomizeScreen(
-                appId = appId,
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        composable(
-            route = Screen.DeviceInfo.route,
-            arguments = listOf(navArgument("appId") { type = NavType.LongType })
-        ) { backStackEntry ->
-            val appId = backStackEntry.arguments?.getLong("appId") ?: return@composable
+        composable(Screen.DeviceInfo.route, arguments = listOf(navArgument("appId") { type = NavType.LongType })) { back ->
+            val appId = back.arguments?.getLong("appId") ?: return@composable
             val vm: DeviceInfoViewModel = hiltViewModel()
             val state by vm.uiState.collectAsState()
-
             LaunchedEffect(appId) { vm.loadApp(appId) }
-
-            if (state.isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                state.app?.let { app ->
-                    DeviceInfoScreen(
-                        app = app,
-                        deviceIdentity = state.deviceIdentity,
-                        onBack = { navController.popBackStack() },
-                        onResetDeviceInfo = { vm.resetDeviceInfo() },
-                        onResetGsf = { vm.resetGsf() }
-                    )
-                }
+            if (state.isLoading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            else state.app?.let { app ->
+                DeviceInfoScreen(app = app, deviceIdentity = null, onBack = { navController.popBackStack() }, onResetDeviceInfo = { }, onResetGsf = { })
             }
         }
 
-        composable(
-            route = Screen.GsfLicense.route,
-            arguments = listOf(navArgument("appId") { type = NavType.LongType })
-        ) { backStackEntry ->
-            val appId = backStackEntry.arguments?.getLong("appId") ?: return@composable
+        composable(Screen.GsfLicense.route, arguments = listOf(navArgument("appId") { type = NavType.LongType })) { back ->
+            val appId = back.arguments?.getLong("appId") ?: return@composable
             val vm: GsfLicenseViewModel = hiltViewModel()
             val state by vm.uiState.collectAsState()
-
             LaunchedEffect(appId) { vm.loadApp(appId) }
-
-            if (state.isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                state.app?.let { app ->
-                    GsfLicenseScreen(
-                        app = app,
-                        currentGsfId = state.currentGsfId,
-                        onBack = { navController.popBackStack() },
-                        onResetLicense = { vm.resetLicense() },
-                        onSetLicense = { _, gsfId -> vm.setCustomLicense(gsfId) }
-                    )
-                }
+            if (state.isLoading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            else state.app?.let { app ->
+                GsfLicenseScreen(app = app, currentGsfId = state.currentGsfId, onBack = { navController.popBackStack() }, onResetLicense = { vm.resetLicense() }, onSetLicense = { _, id -> vm.setCustomLicense(id) })
             }
         }
 
-        composable(
-            route = Screen.IconFake.route,
-            arguments = listOf(navArgument("appId") { type = NavType.LongType })
-        ) { backStackEntry ->
-            val appId = backStackEntry.arguments?.getLong("appId") ?: return@composable
-            // NOTE: IconFakeScreen loads its own app data internally
-            // using LazyColumn with installed apps list
-            IconFakeScreen(
-                appId = appId,
-                onBack = { navController.popBackStack() },
-                onIconSelected = { }
-            )
+        composable(Screen.IconFake.route, arguments = listOf(navArgument("appId") { type = NavType.LongType })) { back ->
+            val appId = back.arguments?.getLong("appId") ?: return@composable
+            IconFakeScreen(appId = appId, onBack = { navController.popBackStack() }, onIconSelected = { })
         }
 
-        composable(Screen.LogViewer.route) {
-            LogViewerScreen(
-                onBack = { navController.popBackStack() }
-            )
-        }
+        composable(Screen.LogViewer.route) { LogViewerScreen(onBack = { navController.popBackStack() }) }
 
         composable(Screen.Onboarding.route) {
-            OnboardingScreen(
-                onFinish = {
-                    navController.navigate(Screen.Home.route) {
-                        popUpTo(Screen.Onboarding.route) { inclusive = true }
-                    }
-                }
-            )
+            OnboardingScreen(onFinish = { navController.navigate(Screen.Home.route) { popUpTo(Screen.Onboarding.route) { inclusive = true } } })
         }
     }
 }

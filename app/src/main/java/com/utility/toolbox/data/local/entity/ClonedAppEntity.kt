@@ -2,36 +2,24 @@ package com.utility.toolbox.data.local.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
-import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * Represents a cloned app inside a workspace.
- * Stores metadata about the cloned application.
+ * Each cloned app is independent with its own spoofed device identity.
+ * No workspace concept — every clone is a standalone virtual device.
  */
 @Entity(
     tableName = "cloned_apps",
-    foreignKeys = [
-        ForeignKey(
-            entity = WorkspaceEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["workspace_id"],
-            onDelete = ForeignKey.CASCADE
-        )
-    ],
     indices = [
-        Index("workspace_id"),
         Index("original_package"),
-        Index("clone_package")
+        Index("clone_package"),
+        Index("user_id")
     ]
 )
 data class ClonedAppEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-
-    @ColumnInfo(name = "workspace_id")
-    val workspaceId: Long,
 
     @ColumnInfo(name = "original_package")
     val originalPackage: String,
@@ -54,15 +42,48 @@ data class ClonedAppEntity(
     @ColumnInfo(name = "version_code")
     val versionCode: Int = 0,
 
-    @ColumnInfo(name = "icon_path")
-    val iconPath: String = "",
-
     @ColumnInfo(name = "apk_path")
     val apkPath: String = "",
 
     @ColumnInfo(name = "data_path")
     val dataPath: String = "",
 
+    @ColumnInfo(name = "user_id")
+    val userId: Int,
+
+    // ── Per-clone spoofed identity ──────────────────────────────────
+    @ColumnInfo(name = "android_id")
+    val androidId: String = "",
+
+    @ColumnInfo(name = "device_model")
+    val deviceModel: String = "",
+
+    @ColumnInfo(name = "device_brand")
+    val deviceBrand: String = "",
+
+    @ColumnInfo(name = "device_fingerprint")
+    val deviceFingerprint: String = "",
+
+    @ColumnInfo(name = "device_serial")
+    val deviceSerial: String = "",
+
+    @ColumnInfo(name = "imei")
+    val imei: String = "",
+
+    @ColumnInfo(name = "mac_address")
+    val macAddress: String = "",
+
+    @ColumnInfo(name = "gsf_id")
+    val gsfId: String = "",
+
+    // ── GMS per clone ───────────────────────────────────────────────
+    @ColumnInfo(name = "gms_installed")
+    val gmsInstalled: Boolean = false,
+
+    @ColumnInfo(name = "gms_install_date")
+    val gmsInstallDate: Long = 0,
+
+    // ── Status ──────────────────────────────────────────────────────
     @ColumnInfo(name = "is_installed")
     val isInstalled: Boolean = false,
 

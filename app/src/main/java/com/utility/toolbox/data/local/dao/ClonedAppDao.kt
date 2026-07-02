@@ -12,20 +12,17 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ClonedAppDao {
 
-    @Query("SELECT * FROM cloned_apps WHERE workspace_id = :workspaceId ORDER BY last_launch DESC")
-    fun getAppsByWorkspace(workspaceId: Long): Flow<List<ClonedAppEntity>>
-
     @Query("SELECT * FROM cloned_apps ORDER BY last_launch DESC")
     fun getAllApps(): Flow<List<ClonedAppEntity>>
 
     @Query("SELECT * FROM cloned_apps WHERE id = :id")
     suspend fun getAppById(id: Long): ClonedAppEntity?
 
-    @Query("SELECT * FROM cloned_apps WHERE clone_package = :packageName LIMIT 1")
-    suspend fun getAppByClonePackage(packageName: String): ClonedAppEntity?
+    @Query("SELECT * FROM cloned_apps WHERE clone_package = :packageName")
+    suspend fun getAppsByPackage(packageName: String): List<ClonedAppEntity>
 
-    @Query("SELECT * FROM cloned_apps WHERE original_package = :packageName LIMIT 1")
-    suspend fun getAppByOriginalPackage(packageName: String): ClonedAppEntity?
+    @Query("SELECT * FROM cloned_apps WHERE original_package = :originalPackage")
+    suspend fun getClonesOf(originalPackage: String): List<ClonedAppEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(app: ClonedAppEntity): Long
@@ -39,12 +36,6 @@ interface ClonedAppDao {
     @Query("DELETE FROM cloned_apps WHERE id = :id")
     suspend fun deleteById(id: Long)
 
-    @Query("DELETE FROM cloned_apps WHERE workspace_id = :workspaceId")
-    suspend fun deleteByWorkspace(workspaceId: Long)
-
-    @Query("UPDATE cloned_apps SET is_installed = :installed WHERE id = :id")
-    suspend fun updateInstallStatus(id: Long, installed: Boolean)
-
     @Query("UPDATE cloned_apps SET is_running = :running WHERE id = :id")
     suspend fun updateRunningStatus(id: Long, running: Boolean)
 
@@ -54,14 +45,8 @@ interface ClonedAppDao {
     @Query("UPDATE cloned_apps SET cache_size = :size WHERE id = :id")
     suspend fun updateCacheSize(id: Long, size: Long)
 
-    @Query("SELECT COUNT(*) FROM cloned_apps WHERE workspace_id = :workspaceId")
-    suspend fun getAppCount(workspaceId: Long): Int
-
-    @Query("SELECT SUM(app_size) FROM cloned_apps WHERE workspace_id = :workspaceId")
-    suspend fun getTotalAppSize(workspaceId: Long): Long?
-
-    @Query("SELECT COUNT(*) FROM cloned_apps WHERE original_package = :originalPackage AND workspace_id = :workspaceId")
-    suspend fun getCloneCount(originalPackage: String, workspaceId: Long): Int
+    @Query("SELECT COUNT(*) FROM cloned_apps WHERE original_package = :originalPackage")
+    suspend fun getCloneCount(originalPackage: String): Int
 
     @Query("SELECT * FROM cloned_apps WHERE is_running = 1")
     suspend fun getRunningApps(): List<ClonedAppEntity>
@@ -74,4 +59,7 @@ interface ClonedAppDao {
 
     @Query("UPDATE cloned_apps SET gsf_reset_count = gsf_reset_count + 1 WHERE id = :id")
     suspend fun incrementGsfReset(id: Long)
+
+    @Query("UPDATE cloned_apps SET gms_installed = :installed, gms_install_date = :date WHERE id = :id")
+    suspend fun updateGmsStatus(id: Long, installed: Boolean, date: Long = System.currentTimeMillis())
 }

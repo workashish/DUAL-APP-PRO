@@ -234,14 +234,12 @@ class AntiDetectionManager @Inject constructor(
     // of the host app's actual data directory.
 
     /**
-     * Get the workspace's isolated data directory.
-     * BlackBox creates a virtual /data/data/<package>/ directory
-     * per workspace so the cloned app sees a normal path.
+     * Get the virtual data directory for a clone.
      */
-    fun getVirtualDataDir(workspaceId: Long, virtualPackage: String): File {
+    fun getVirtualDataDir(userId: Int, virtualPackage: String): File {
         return File(
             context.filesDir,
-            "vdata/$workspaceId/$virtualPackage"
+            "vdata/$userId/$virtualPackage"
         ).also { it.mkdirs() }
     }
 

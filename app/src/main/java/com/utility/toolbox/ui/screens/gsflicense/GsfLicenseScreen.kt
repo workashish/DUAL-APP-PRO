@@ -124,7 +124,7 @@ fun GsfLicenseScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "For: ${app.displayName} • Workspace ${app.workspaceId}",
+                            text = "For: ${app.displayName} • User ${app.userId}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

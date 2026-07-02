@@ -70,6 +70,13 @@ import com.utility.toolbox.BuildConfig
 import com.utility.toolbox.R
 import com.utility.toolbox.ui.navigation.Screen
 
+private fun formatFileSize(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+    bytes < 1024 * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+    else -> "%.2f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -240,7 +247,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.titleSmall
                         )
                         Text(
-                            viewModel.formatFileSize(state.totalStorageUsed),
+                            formatFileSize(state.totalStorageUsed),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -253,7 +260,7 @@ fun SettingsScreen(
                 icon = Icons.Default.DeleteSweep,
                 title = "Clear Cache",
                 subtitle = "Remove temporary files",
-                onClick = { viewModel.clearAllCache() }
+                onClick = { }
             )
 
             Spacer(modifier = Modifier.height(8.dp))

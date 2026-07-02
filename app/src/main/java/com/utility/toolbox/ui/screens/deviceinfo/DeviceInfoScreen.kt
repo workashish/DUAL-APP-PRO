@@ -166,7 +166,7 @@ fun DeviceInfoScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "Workspace ${app.workspaceId} • Device ID resets: ${app.deviceInfoResetCount} • GSF resets: ${app.gsfResetCount}",
+                            text = "User ${app.userId} • Device ID resets: ${app.deviceInfoResetCount} • GSF resets: ${app.gsfResetCount}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -2,12 +2,8 @@ package com.utility.toolbox.domain.model
 
 import com.utility.toolbox.ui.theme.WorkspaceColorInts
 
-/**
- * Domain model representing a cloned application.
- */
 data class ClonedApp(
     val id: Long,
-    val workspaceId: Long,
     val originalPackage: String,
     val clonePackage: String,
     val appName: String,
@@ -15,9 +11,19 @@ data class ClonedApp(
     val customIconColor: Int? = null,
     val versionName: String,
     val versionCode: Int,
-    val iconPath: String,
     val apkPath: String,
     val dataPath: String,
+    val userId: Int,
+    val androidId: String,
+    val deviceModel: String,
+    val deviceBrand: String,
+    val deviceFingerprint: String,
+    val deviceSerial: String,
+    val imei: String,
+    val macAddress: String,
+    val gsfId: String,
+    val gmsInstalled: Boolean,
+    val gmsInstallDate: Long,
     val isInstalled: Boolean,
     val isRunning: Boolean,
     val installDate: Long,
@@ -37,5 +43,8 @@ data class ClonedApp(
         get() = customIconColor ?: WorkspaceColorInts[id.toInt() % WorkspaceColorInts.size]
 
     val isRecentlyUsed: Boolean
-        get() = System.currentTimeMillis() - lastLaunch < 24 * 60 * 60 * 1000L // 24 hours
+        get() = System.currentTimeMillis() - lastLaunch < 24 * 60 * 60 * 1000L
+
+    val deviceLabel: String
+        get() = "$deviceBrand $deviceModel"
 }

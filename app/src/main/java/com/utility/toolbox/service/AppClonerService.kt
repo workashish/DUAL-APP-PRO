@@ -20,7 +20,6 @@ import androidx.core.content.FileProvider
 import com.utility.toolbox.MainActivity
 import com.utility.toolbox.R
 import com.utility.toolbox.data.local.entity.ClonedAppEntity
-import com.utility.toolbox.data.local.entity.WorkspaceEntity
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,14 +45,14 @@ class AppClonerService : Service() {
         private const val ACTION_CLONE = "com.utility.toolbox.CLONE_APP"
         private const val ACTION_INSTALL = "com.utility.toolbox.INSTALL_CLONE"
         const val EXTRA_PACKAGE_NAME = "extra_package_name"
-        const val EXTRA_WORKSPACE_ID = "extra_workspace_id"
+        const val EXTRA_USER_ID = "extra_user_id"
         const val EXTRA_CLONE_NAME = "extra_clone_name"
 
-        fun cloneApp(context: Context, packageName: String, workspaceId: Long) {
+        fun cloneApp(context: Context, packageName: String, userId: Int) {
             val intent = Intent(context, AppClonerService::class.java).apply {
                 action = ACTION_CLONE
                 putExtra(EXTRA_PACKAGE_NAME, packageName)
-                putExtra(EXTRA_WORKSPACE_ID, workspaceId)
+                putExtra(EXTRA_USER_ID, userId)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -81,9 +80,9 @@ class AppClonerService : Service() {
         when (intent?.action) {
             ACTION_CLONE -> {
                 val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return START_STICKY
-                val workspaceId = intent.getLongExtra(EXTRA_WORKSPACE_ID, -1)
-                if (workspaceId == -1L) return START_STICKY
-                handleCloneApp(packageName, workspaceId)
+                val userId = intent.getIntExtra(EXTRA_USER_ID, -1)
+                if (userId == -1) return START_STICKY
+                handleCloneApp(packageName, userId)
             }
         }
 
@@ -99,13 +98,13 @@ class AppClonerService : Service() {
      * This service remains for legacy compatibility but does NOT perform actual cloning.
      * The correct flow: CloneViewModel → AppRepository.cloneApp() → BlackBoxEngine.installClone()
      */
-    private fun handleCloneApp(packageName: String, workspaceId: Long) {
+    private fun handleCloneApp(packageName: String, userId: Int) {
         if (isRunning) return
         isRunning = true
 
         serviceScope.launch {
             try {
-                Log.i(TAG, "cloneApp called for $packageName (ws=$workspaceId) — " +
+                Log.i(TAG, "cloneApp called for $packageName — " +
                     "redirecting to AppRepository flow...")
                 // The actual cloning is handled by AppRepository / BlackBoxEngine
                 // which is called from CloneViewModel.cloneSelectedApps()
@@ -168,7 +167,7 @@ class AppClonerService : Service() {
         }
     }
 
-    private fun extractAndInstallViaBlackBox(packageName: String, workspaceId: Long) {
+    private fun extractAndInstallViaBlackBox(packageName: String, userId: Int) {
         // DEPRECATED: The old approach of copying APK and requesting system install 
         // is fundamentally wrong for a clone engine. 
         //
@@ -178,13 +177,13 @@ class AppClonerService : Service() {
         //
         // This method exists only as a reference and is NOT called in the current flow.
         // To restore: add action INSTALL_CLONE and wire it up.
-        Log.w(TAG, "extractAndInstallViaBlackBox($packageName, $workspaceId) — deprecated, no-op")
+        Log.w(TAG, "extractAndInstallViaBlackBox($packageName, $userId) — deprecated, no-op")
     }
 
-    private fun getCloneStorageDir(workspaceId: Long, packageName: String): File {
+    private fun getCloneStorageDir(userId: Int, packageName: String): File {
         val baseDir = File(
             getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS),
-            "workspaces/ws_$workspaceId/apps/$packageName"
+            "clones/$userId/apps/$packageName"
         )
         baseDir.mkdirs()
         return baseDir

@@ -107,9 +107,9 @@ fun AppCard(
                             modifier = Modifier.size(24.dp),
                             tint = Color.White.copy(alpha = 0.8f)
                         )
-                    } else if (app.iconPath.isNotBlank()) {
+                    } else if (app.fakeIconPath.isNotBlank()) {
                         AsyncImage(
-                            model = app.iconPath,
+                            model = app.fakeIconPath,
                             contentDescription = app.displayName,
                             modifier = Modifier.fillMaxSize()
                         )

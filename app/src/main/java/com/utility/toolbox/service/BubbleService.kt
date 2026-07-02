@@ -205,7 +205,7 @@ class BubbleService : Service() {
                             appView.setOnClickListener {
                                 // Launch via BlackBoxEngine for proper isolation
                                 if (blackBoxEngine.isInitialized()) {
-                                    blackBoxEngine.launchClone(app.clonePackage, app.workspaceId)
+                                    blackBoxEngine.launchClone(app.clonePackage, app.userId)
                                 } else {
                                     val launchIntent = packageManager
                                         .getLaunchIntentForPackage(app.clonePackage)

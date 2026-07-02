@@ -4,7 +4,6 @@ import android.content.Context
 import com.utility.toolbox.data.local.AppDatabase
 import com.utility.toolbox.data.local.dao.ClonedAppDao
 import com.utility.toolbox.data.local.dao.LogDao
-import com.utility.toolbox.data.local.dao.WorkspaceDao
 import com.utility.toolbox.service.AntiDetectionManager
 import com.utility.toolbox.service.BlackBoxEngine
 import com.utility.toolbox.service.LogManager
@@ -23,11 +22,6 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase {
         return AppDatabase.getInstance(context)
-    }
-
-    @Provides
-    fun provideWorkspaceDao(database: AppDatabase): WorkspaceDao {
-        return database.workspaceDao()
     }
 
     @Provides
@@ -58,8 +52,6 @@ object AppModule {
     @Provides
     @Singleton
     fun provideBlackBoxEngine(@ApplicationContext context: Context): BlackBoxEngine {
-        // Return the existing singleton instance to avoid dual-instance bug.
-        // The first instance was created in DualAppsApp.attachBaseContext().
         return BlackBoxEngine.getInstance(context)
     }
 }
