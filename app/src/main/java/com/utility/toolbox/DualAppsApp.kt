@@ -97,8 +97,7 @@ class DualAppsApp : Application() {
             if (procName != null && procName != packageName) {
                 return true
             }
-            // Method 3: Check if we're in a different process than the host
-            android.os.Process.myPid() != android.os.Process.myUid()
+            false
         } catch (_: Exception) { false }
     }
 
