@@ -70,15 +70,24 @@ class BlackBoxEngine @Inject constructor(
         if (!frameworkInitialized || !engineStarted) return CloneResult(false, null, "Engine not ready")
         ensureServicesReady()
         try {
-            if (BlackBoxCore.get().isInstalled(packageName, userId)) return CloneResult(true, packageName)
+            if (BlackBoxCore.get().isInstalled(packageName, userId)) {
+                LogManager.i("BlackBox", "Already installed: $packageName (user=$userId)")
+                return CloneResult(true, packageName)
+            }
         } catch (_: Exception) {}
         return try {
             val result: InstallResult = BlackBoxCore.get().installPackageAsUser(packageName, userId)
             if (result.success) {
-                Log.i(TAG, "Installed $packageName (userId=$userId)")
+                LogManager.i("BlackBox", "✓ Installed $packageName (user=$userId)")
                 CloneResult(true, result.packageName ?: packageName)
-            } else CloneResult(false, null, result.msg)
-        } catch (e: Exception) { CloneResult(false, null, e.message) }
+            } else {
+                LogManager.e("BlackBox", "✗ Install failed: ${result.msg}")
+                CloneResult(false, null, result.msg)
+            }
+        } catch (e: Exception) {
+            LogManager.e("BlackBox", "✗ Install exception: ${e.message}")
+            CloneResult(false, null, e.message)
+        }
     }
 
     fun installCloneFromFile(apkFile: java.io.File, userId: Int): CloneResult {
@@ -94,21 +103,51 @@ class BlackBoxEngine @Inject constructor(
     // ── Launch ───────────────────────────────────────────────────────
 
     fun launchClone(clonePackage: String, userId: Int): Boolean {
-        if (!frameworkInitialized || !engineStarted) return false
+        if (!frameworkInitialized || !engineStarted) { LogManager.e("BlackBox", "Cannot launch $clonePackage — engine not ready"); return false }
         ensureServicesReady()
+
+        // Step 1: Verify/reinstall
         try {
             if (!BlackBoxCore.get().isInstalled(clonePackage, userId)) {
+                LogManager.w("BlackBox", "Not installed, re-installing $clonePackage")
                 val r = BlackBoxCore.get().installPackageAsUser(clonePackage, userId)
-                if (!r.success) return false
+                if (!r.success) { LogManager.e("BlackBox", "Re-install failed: ${r.msg}"); return false }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            LogManager.w("BlackBox", "Install check failed: ${e.message}")
+        }
+
+        // Step 2: Pre-launch hook
         try { BlackBoxCore.get().onBeforeMainLaunchApk(clonePackage, userId) } catch (_: Exception) {}
+
+        // Step 3: Try launchApk first
         for (attempt in 1..MAX_LAUNCH_ATTEMPTS) {
             try {
-                if (BlackBoxCore.get().launchApk(clonePackage, userId)) return true
-            } catch (_: Exception) {}
+                if (BlackBoxCore.get().launchApk(clonePackage, userId)) {
+                    LogManager.i("BlackBox", "✓ Launched $clonePackage via launchApk (user=$userId)")
+                    return true
+                }
+                LogManager.w("BlackBox", "launchApk returned false, attempt $attempt")
+            } catch (e: Exception) {
+                LogManager.w("BlackBox", "launchApk exception: ${e.message}")
+            }
             if (attempt < MAX_LAUNCH_ATTEMPTS) Thread.sleep(RETRY_DELAY_MS)
         }
+
+        // Step 4: Fallback — use startActivity with proxy intent
+        LogManager.w("BlackBox", "launchApk failed, trying startActivity fallback")
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage(clonePackage)
+            if (intent != null) {
+                BlackBoxCore.get().startActivity(intent, userId)
+                LogManager.i("BlackBox", "✓ Launched $clonePackage via startActivity fallback (user=$userId)")
+                return true
+            }
+        } catch (e: Exception) {
+            LogManager.e("BlackBox", "startActivity fallback failed: ${e.message}")
+        }
+
+        LogManager.e("BlackBox", "✗ All launch methods failed for $clonePackage")
         return false
     }
 
@@ -119,18 +158,50 @@ class BlackBoxEngine @Inject constructor(
         return try {
             try { BlackBoxCore.get().clearPackage(clonePackage, userId) } catch (_: Exception) {}
             BlackBoxCore.get().uninstallPackageAsUser(clonePackage, userId)
-            true
-        } catch (_: Exception) { false }
+            LogManager.i("BlackBox", "✓ Uninstalled $clonePackage (user=$userId)"); true
+        } catch (e: Exception) { LogManager.e("BlackBox", "✗ Uninstall failed: ${e.message}"); false }
     }
 
     fun stopClone(clonePackage: String, userId: Int): Boolean {
         if (!frameworkInitialized) return false
-        return try { BlackBoxCore.get().stopPackage(clonePackage, userId); true } catch (_: Exception) { false }
+        return try {
+            BlackBoxCore.get().stopPackage(clonePackage, userId)
+            LogManager.i("BlackBox", "✓ Stopped $clonePackage (user=$userId)"); true
+        } catch (e: Exception) {
+            LogManager.e("BlackBox", "✗ Stop failed: ${e.message}"); false
+        }
+    }
+
+    fun killCloneProcess(clonePackage: String) {
+        try {
+            val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            am.killBackgroundProcesses(clonePackage)
+            LogManager.i("BlackBox", "✓ Killed process for $clonePackage")
+        } catch (e: Exception) {
+            LogManager.w("BlackBox", "Failed to kill process: ${e.message}")
+        }
+    }
+
+    fun killAllCloneProcesses() {
+        try {
+            val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            am.runningAppProcesses?.forEach { proc ->
+                if (proc.processName.contains(":p") || proc.processName.contains(":black")) {
+                    am.killBackgroundProcesses(proc.processName)
+                    LogManager.i("BlackBox", "Killed process: ${proc.processName}")
+                }
+            }
+        } catch (e: Exception) {
+            LogManager.w("BlackBox", "Failed to kill all processes: ${e.message}")
+        }
     }
 
     fun clearCloneData(clonePackage: String, userId: Int): Boolean {
         if (!frameworkInitialized) return false
-        return try { BlackBoxCore.get().clearPackage(clonePackage, userId); true } catch (_: Exception) { false }
+        return try {
+            BlackBoxCore.get().clearPackage(clonePackage, userId)
+            LogManager.i("BlackBox", "✓ Cleared data for $clonePackage (user=$userId)"); true
+        } catch (e: Exception) { LogManager.e("BlackBox", "✗ Clear failed: ${e.message}"); false }
     }
 
     fun isCloneInstalled(clonePackage: String, userId: Int): Boolean {
@@ -142,12 +213,18 @@ class BlackBoxEngine @Inject constructor(
 
     fun installGms(userId: Int): Boolean {
         if (!frameworkInitialized) return false
-        return try { BlackBoxCore.get().installGms(userId).success } catch (_: Exception) { false }
+        return try {
+            val ok = BlackBoxCore.get().installGms(userId).success
+            LogManager.i("BlackBox", if (ok) "✓ GMS installed (user=$userId)" else "✗ GMS install failed"); ok
+        } catch (e: Exception) { LogManager.e("BlackBox", "✗ GMS exception: ${e.message}"); false }
     }
 
     fun uninstallGms(userId: Int): Boolean {
         if (!frameworkInitialized) return false
-        return try { BlackBoxCore.get().uninstallGms(userId) } catch (_: Exception) { false }
+        return try {
+            val ok = BlackBoxCore.get().uninstallGms(userId)
+            LogManager.i("BlackBox", if (ok) "✓ GMS removed (user=$userId)" else "✗ GMS remove failed"); ok
+        } catch (e: Exception) { LogManager.e("BlackBox", "✗ GMS exception: ${e.message}"); false }
     }
 
     fun isGmsInstalled(userId: Int): Boolean {

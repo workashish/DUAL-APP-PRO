@@ -31,6 +31,10 @@ interface LogDao {
     @Query("SELECT * FROM logs ORDER BY timestamp DESC")
     fun getAllLogs(): Flow<List<LogEntry>>
 
+    /** Get all logs synchronously (for API). */
+    @Query("SELECT * FROM logs ORDER BY timestamp DESC")
+    suspend fun getAllLogsSync(): List<LogEntry>
+
     /** Get logs filtered by minimum level (e.g. "W" = WARN and above). */
     @Query("SELECT * FROM logs WHERE level IN (:levels) ORDER BY timestamp DESC")
     fun getLogsByLevel(levels: List<String>): Flow<List<LogEntry>>

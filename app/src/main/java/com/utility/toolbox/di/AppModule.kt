@@ -3,10 +3,8 @@ package com.utility.toolbox.di
 import android.content.Context
 import com.utility.toolbox.data.local.AppDatabase
 import com.utility.toolbox.data.local.dao.ClonedAppDao
-import com.utility.toolbox.data.local.dao.LogDao
 import com.utility.toolbox.service.AntiDetectionManager
 import com.utility.toolbox.service.BlackBoxEngine
-import com.utility.toolbox.service.LogManager
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -27,20 +25,6 @@ object AppModule {
     @Provides
     fun provideClonedAppDao(database: AppDatabase): ClonedAppDao {
         return database.clonedAppDao()
-    }
-
-    @Provides
-    fun provideLogDao(database: AppDatabase): LogDao {
-        return database.logDao()
-    }
-
-    @Provides
-    @Singleton
-    fun provideLogManager(
-        logDao: LogDao,
-        @ApplicationContext context: Context
-    ): LogManager {
-        return LogManager.getInstance(context, logDao)
     }
 
     @Provides

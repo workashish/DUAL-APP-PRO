@@ -106,6 +106,17 @@
         <service android:name=".service.BubbleService"
             android:foregroundServiceType="specialUse" android:exported="false" />
 
+        <!-- ─── App Update Receiver ──────────────────────────────────────── -->
+        <receiver android:name=".service.AppUpdateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
         <!-- ─── AdMob App ID ────────────────────────────────────────────── -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"

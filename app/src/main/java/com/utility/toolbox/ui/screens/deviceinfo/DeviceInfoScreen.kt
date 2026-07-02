@@ -99,16 +99,15 @@ fun DeviceInfoScreen(
     val realDisplay = Build.DISPLAY
     val realSdk = "${Build.VERSION.SDK_INT} (Android ${Build.VERSION.RELEASE})"
 
-    // ── Spoofed identity ────────────────────────────────────────────────
-    // If BlackBox is active, this comes from the virtual engine.
-    // Otherwise, it shows what WOULD be generated.
-    val spoofedAndroidId = deviceIdentity?.androidId ?: "— (BlackBox not loaded)"
-    val spoofedDevice = deviceIdentity?.deviceModel ?: "—"
-    val spoofedBrand = deviceIdentity?.deviceBrand ?: "—"
-    val spoofedFingerprint = deviceIdentity?.deviceFingerprint ?: "—"
-    val spoofedSerial = deviceIdentity?.deviceSerial ?: "—"
-    val spoofedImei = deviceIdentity?.imei ?: "—"
-    val spoofedMac = deviceIdentity?.macAddress ?: "—"
+    // ── Spoofed identity — from ClonedApp's embedded fields ────────────
+    val spoofedAndroidId = app.androidId.ifBlank { "—" }
+    val spoofedDevice = app.deviceModel.ifBlank { "—" }
+    val spoofedBrand = app.deviceBrand.ifBlank { "—" }
+    val spoofedFingerprint = app.deviceFingerprint.ifBlank { "—" }
+    val spoofedSerial = app.deviceSerial.ifBlank { "—" }
+    val spoofedImei = app.imei.ifBlank { "—" }
+    val spoofedMac = app.macAddress.ifBlank { "—" }
+    val spoofedGsfId = app.gsfId.ifBlank { "—" }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -212,16 +211,6 @@ fun DeviceInfoScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    if (deviceIdentity == null) {
-                        Text(
-                            text = "⚠️ BlackBox engine not loaded. Device spoofing requires the BlackBox AAR.\n\n" +
-                                "Cloned apps currently see the REAL device identity.\n" +
-                                "See the integration guide in BlackBoxEngine.kt to enable spoofing.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(8.dp)
-                        )
-                    }
                     DeviceInfoRow("Android ID", spoofedAndroidId, clipboard, snackbarHostState)
                     DeviceInfoRow("Device Model", spoofedDevice)
                     DeviceInfoRow("Brand", spoofedBrand)

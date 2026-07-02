@@ -255,6 +255,14 @@ fun SettingsScreen(
                 }
             }
 
+            // Kill all clone processes
+            SettingsClickable(
+                icon = Icons.Default.DeleteSweep,
+                title = "Kill All Clones",
+                subtitle = "Stop all running cloned apps",
+                onClick = { viewModel.killAllClones() }
+            )
+
             // Clear cache
             SettingsClickable(
                 icon = Icons.Default.DeleteSweep,

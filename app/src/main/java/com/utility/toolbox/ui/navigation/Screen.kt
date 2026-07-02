@@ -17,6 +17,10 @@ sealed class Screen(val route: String, val title: String, val icon: ImageVector?
     data object IconFake : Screen("icon_fake/{appId}", "Icon Fake") { fun createRoute(appId: Long) = "icon_fake/$appId" }
     data object LogViewer : Screen("log_viewer", "Logs", Icons.Default.BugReport)
     data object Onboarding : Screen("onboarding", "Onboarding")
+    data object RootCheck : Screen("root_check", "Root Check")
+    data object Permissions : Screen("permissions/{packageName}/{appName}", "Permissions") {
+        fun createRoute(packageName: String, appName: String) = "permissions/$packageName/$appName"
+    }
 
     companion object { val bottomNavItems = listOf(Home, Clone, Settings) }
 }

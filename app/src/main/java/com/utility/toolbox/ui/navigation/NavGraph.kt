@@ -74,5 +74,18 @@ fun NavGraph(
         composable(Screen.Onboarding.route) {
             OnboardingScreen(onFinish = { navController.navigate(Screen.Home.route) { popUpTo(Screen.Onboarding.route) { inclusive = true } } })
         }
+
+        composable(Screen.RootCheck.route) {
+            com.utility.toolbox.ui.screens.rootcheck.RootCheckScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Screen.Permissions.route, arguments = listOf(
+            navArgument("packageName") { type = NavType.StringType },
+            navArgument("appName") { type = NavType.StringType }
+        )) { back ->
+            val pkg = back.arguments?.getString("packageName") ?: return@composable
+            val name = back.arguments?.getString("appName") ?: return@composable
+            com.utility.toolbox.ui.screens.permissions.PermissionScreen(packageName = pkg, appName = name, onBack = { navController.popBackStack() })
+        }
     }
 }

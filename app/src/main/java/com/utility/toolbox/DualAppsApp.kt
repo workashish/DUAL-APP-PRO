@@ -14,152 +14,96 @@ import top.niunaijun.blackbox.app.configuration.AppLifecycleCallback
 import top.niunaijun.blackbox.app.configuration.ClientConfiguration
 import javax.inject.Inject
 
-/**
- * Application class for DualApps/Toolbox.
- *
- * Integrates BlackBox virtual engine for app cloning and device spoofing.
- * Initialization order matters:
- *   1. attachBaseContext() — BlackBox hooks into Android framework at the base context level
- *   2. onCreate() — Start the virtual engine after BlackBox is initialized
- *
- * CRITICAL: attachBaseContext() runs BEFORE Hilt injection is available.
- * So BlackBox framework init must happen manually via BlackBoxCore directly.
- * Then onCreate() uses the Hilt-injected BlackBoxEngine for post-init steps.
- */
 @HiltAndroidApp
 class DualAppsApp : Application() {
 
-    @Inject
-    lateinit var blackBoxEngine: BlackBoxEngine
+    @Inject lateinit var blackBoxEngine: BlackBoxEngine
 
     override fun attachBaseContext(base: Context?) {
         super.attachBaseContext(base)
+        val b = base ?: return
 
-        val b = base ?: run {
-            Log.e("DualAppsApp", "attachBaseContext called with null base — skipping BlackBox init")
-            return
-        }
-
-        // ─────────────────────────────────────────────────────────────────
-        // Initialize BlackBox virtual engine.
-        // Hilt is NOT ready yet, so we initialize directly via BlackBoxCore.
-        // Sync initialization is required for the engine to work correctly.
-        //
-        // The correct initialization sequence (from NewBlackbox App.kt):
-        //   1. closeCodeInit() — close anti-reverse-engineering checks
-        //   2. onBeforeMainApplicationAttach() — app lifecycle hook
-        //   3. doAttachBaseContext() — hooks into Android framework
-        //   4. onAfterMainApplicationAttach() — post-attach lifecycle hook
-        //   5. addAppLifecycleCallback() — register lifecycle callbacks
-        // ─────────────────────────────────────────────────────────────────
+        // ALL processes need BlackBox init in attachBaseContext
+        // (including :black server process and :p0 proxy processes)
         try {
-            // Step 1: Close anti-reverse-engineering code
             BlackBoxCore.get().closeCodeInit()
-
-            // Step 2: Before attach notify lifecycle
             BlackBoxCore.get().onBeforeMainApplicationAttach(this, b)
-
-            // Step 3: Attach to base context with client configuration
-            // NOTE: isEnableLauncherActivity() returns false to skip the
-            // BlackBox LauncherActivity splash screen. This provides:
-            //   - Direct launch: cloned apps open immediately without an
-            //     interstitial branded loading screen
-            //   - Better compatibility: avoids potential crashes when the
-            //     splash screen tries to load app info from the virtual env
-            //   - Faster perceived startup: users see the cloned app directly
             BlackBoxCore.get().doAttachBaseContext(b, object : ClientConfiguration() {
                 override fun getHostPackageName(): String = b.packageName
                 override fun isEnableLauncherActivity(): Boolean = false
                 override fun isHideRoot(): Boolean = true
-                override fun isDisableFlagSecure(): Boolean = false
                 override fun isEnableDaemonService(): Boolean = true
             })
-
-            // Step 4: After attach notify lifecycle
             BlackBoxCore.get().onAfterMainApplicationAttach(this, b)
-
-            // Step 5: Register lifecycle callback for cloned app lifecycle events
             BlackBoxCore.get().addAppLifecycleCallback(object : AppLifecycleCallback() {
-                override fun onStoragePermissionNeeded(packageName: String?, userId: Int): Boolean {
-                    Log.w("DualAppsApp", "Storage permission needed for: $packageName (user: $userId)")
-                    return false
-                }
+                override fun onStoragePermissionNeeded(pkg: String?, userId: Int): Boolean = false
             })
-
-            // Mark BlackBox as framework-initialized (shared companion flag)
             BlackBoxEngine.markFrameworkInitialized()
-
-            Log.i("DualAppsApp", "BlackBox framework initialized successfully")
+            Log.i("DualAppsApp", "BlackBox framework initialized (${getProcName()})")
         } catch (e: Exception) {
-            Log.e("DualAppsApp", "BlackBox framework init failed", e)
+            Log.e("DualAppsApp", "BlackBox init failed", e)
         }
     }
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannels()
 
-        // Install in-app logging and crash handler
-        try {
-            LogManager.installCrashHandler()
-            // Log key device info at startup
-            LogManager.i("DualAppsApp", "App started — v${BuildConfig.VERSION_NAME} (SDK ${Build.VERSION.SDK_INT})")
-            LogManager.d("DualAppsApp", "Package: $packageName")
-        } catch (e: Exception) {
-            Log.e("DualAppsApp", "Failed to init LogManager", e)
+        // Only skip HOST-SIDE heavy init in child processes
+        // (LogManager, notifications, BlackBoxEngine singleton)
+        if (isBlackBoxChildProcess()) {
+            super.onCreate()
+            return
         }
 
-        // Start the BlackBox virtual engine (Hilt is ready now)
+        try {
+            LogManager.init(this)
+            LogManager.installCrashHandler()
+            LogManager.i("App", "=== DualSpace Started === v${BuildConfig.VERSION_NAME}")
+            LogManager.i("App", "Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, SDK ${Build.VERSION.SDK_INT})")
+            LogManager.i("App", "Package: $packageName")
+        } catch (e: Exception) {
+            Log.e("DualAppsApp", "LogManager init failed", e)
+        }
+
+        createNotificationChannels()
+
         try {
             if (::blackBoxEngine.isInitialized) {
                 blackBoxEngine.onCreate()
-                Log.i("DualAppsApp", "BlackBox engine started")
                 LogManager.i("DualAppsApp", "BlackBox engine started")
-            } else {
-                Log.w("DualAppsApp", "BlackBox engine not initialized (likely in black process)")
             }
         } catch (e: Exception) {
-            Log.e("DualAppsApp", "BlackBox engine onCreate failed", e)
-            LogManager.e("DualAppsApp", "BlackBox engine onCreate failed", e)
+            LogManager.e("DualAppsApp", "BlackBox engine failed: ${e.message}")
         }
+    }
+
+    /**
+     * Detect if we're running inside a BlackBox child process (proxy, black server).
+     * Only used to skip HOST-SIDE init (LogManager, notifications) in child processes.
+     * attachBaseContext() still runs for ALL processes.
+     */
+    private fun isBlackBoxChildProcess(): Boolean {
+        return try {
+            val procName = getProcName()
+            procName.contains(":p") || procName.contains(":black") ||
+                    procName.contains(":assist") || procName.contains(":provider")
+        } catch (_: Exception) { false }
+    }
+
+    private fun getProcName(): String {
+        return try {
+            val pid = android.os.Process.myPid()
+            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+            am.runningAppProcesses?.firstOrNull { it.pid == pid }?.processName ?: packageName
+        } catch (_: Exception) { packageName }
     }
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val notificationManager = getSystemService(NotificationManager::class.java)
-
-            // Clone service channel
-            val cloneServiceChannel = NotificationChannel(
-                CHANNEL_CLONE_SERVICE,
-                "Clone Service",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Shows app cloning progress"
-                setShowBadge(false)
-            }
-
-            // Clone app notifications channel
-            val cloneAppsChannel = NotificationChannel(
-                CHANNEL_CLONE_APPS,
-                "Cloned Apps",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Notifications from your cloned apps"
-            }
-
-            // Bubble service channel
-            val bubbleChannel = NotificationChannel(
-                CHANNEL_BUBBLE,
-                "Quick Switch",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Floating bubble for quick app switching"
-                setShowBadge(false)
-            }
-
-            notificationManager.createNotificationChannel(cloneServiceChannel)
-            notificationManager.createNotificationChannel(cloneAppsChannel)
-            notificationManager.createNotificationChannel(bubbleChannel)
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(NotificationChannel(CHANNEL_CLONE_SERVICE, "Clone Service", NotificationManager.IMPORTANCE_LOW).apply { description = "Cloning progress"; setShowBadge(false) })
+            nm.createNotificationChannel(NotificationChannel(CHANNEL_CLONE_APPS, "Cloned Apps", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "Notifications from cloned apps" })
+            nm.createNotificationChannel(NotificationChannel(CHANNEL_BUBBLE, "Quick Switch", NotificationManager.IMPORTANCE_LOW).apply { description = "Floating bubble"; setShowBadge(false) })
         }
     }
 

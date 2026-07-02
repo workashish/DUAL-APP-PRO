@@ -8,7 +8,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.utility.toolbox.data.repository.AppRepository
 import com.utility.toolbox.domain.model.ClonedApp
+import com.utility.toolbox.service.BlackBoxEngine
 import com.utility.toolbox.service.BubbleService
+import com.utility.toolbox.service.LogManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +32,7 @@ data class SettingsUiState(
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val appRepository: AppRepository,
+    private val blackBoxEngine: BlackBoxEngine,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -62,4 +65,15 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun clearSnackbar() { _uiState.update { it.copy(snackbarMessage = null) } }
+
+    fun killAllClones() {
+        LogManager.i("Settings", "Killing all clone processes")
+        blackBoxEngine.killAllCloneProcesses()
+        viewModelScope.launch {
+            _uiState.value.clonedApps.forEach { app ->
+                appRepository.updateRunningStatus(app.id, false)
+            }
+        }
+        _uiState.update { it.copy(snackbarMessage = "All clone processes killed") }
+    }
 }

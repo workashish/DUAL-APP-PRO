@@ -15,6 +15,9 @@ interface ClonedAppDao {
     @Query("SELECT * FROM cloned_apps ORDER BY last_launch DESC")
     fun getAllApps(): Flow<List<ClonedAppEntity>>
 
+    @Query("SELECT * FROM cloned_apps ORDER BY last_launch DESC")
+    suspend fun getAllAppsSync(): List<ClonedAppEntity>
+
     @Query("SELECT * FROM cloned_apps WHERE id = :id")
     suspend fun getAppById(id: Long): ClonedAppEntity?
 

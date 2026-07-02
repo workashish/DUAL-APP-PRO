@@ -13,6 +13,7 @@ import com.utility.toolbox.data.local.entity.ClonedAppEntity
 import com.utility.toolbox.domain.model.AppInfo
 import com.utility.toolbox.domain.model.ClonedApp
 import com.utility.toolbox.service.BlackBoxEngine
+import com.utility.toolbox.service.LogManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -56,12 +57,23 @@ class AppRepository @Inject constructor(
 
     suspend fun cloneApp(appInfo: AppInfo): Long = withContext(Dispatchers.IO) {
         val userId = blackBoxEngine.nextAvailableUserId()
+        LogManager.i("Repo", "Cloning ${appInfo.appName} → userId=$userId")
 
         val installResult = if (blackBoxEngine.isInitialized()) {
             blackBoxEngine.installClone(appInfo.packageName, userId)
         } else BlackBoxEngine.CloneResult(true, appInfo.packageName)
 
-        if (!installResult.success) return@withContext -1L
+        if (!installResult.success) {
+            LogManager.e("Repo", "✗ Install failed: ${installResult.error}")
+            return@withContext -1L
+        }
+
+        // Auto-install GMS for each clone
+        if (blackBoxEngine.isInitialized()) {
+            LogManager.i("GMS", "Auto-installing GMS for ${appInfo.appName} (user=$userId)")
+            val gmsOk = blackBoxEngine.installGms(userId)
+            LogManager.i("GMS", if (gmsOk) "✓ GMS installed for ${appInfo.appName}" else "✗ GMS install failed (may not be supported)")
+        }
 
         val dataDir = File(context.filesDir, "clones/$userId/${appInfo.packageName}")
         dataDir.mkdirs()
@@ -73,17 +85,22 @@ class AppRepository @Inject constructor(
         val displayName = if (cloneCount > 1) "${appInfo.appName} $cloneCount" else appInfo.appName
         val apkSize = try { File(appInfo.sourceDir).length() } catch (_: Exception) { 0L }
 
+        val gmsInstalled = if (blackBoxEngine.isInitialized()) blackBoxEngine.isGmsInstalled(userId) else false
+
         val entity = ClonedAppEntity(
             originalPackage = appInfo.packageName, clonePackage = appInfo.packageName,
             appName = displayName, userId = userId, androidId = identity.androidId,
             deviceModel = identity.deviceModel, deviceBrand = identity.deviceBrand,
             deviceFingerprint = identity.deviceFingerprint, deviceSerial = identity.deviceSerial,
             imei = identity.imei, macAddress = identity.macAddress, gsfId = identity.gsfId,
+            gmsInstalled = gmsInstalled, gmsInstallDate = if (gmsInstalled) System.currentTimeMillis() else 0,
             isInstalled = true, installDate = System.currentTimeMillis(),
             apkPath = appInfo.sourceDir, dataPath = dataDir.absolutePath,
             appSize = apkSize, versionName = appInfo.versionName, versionCode = appInfo.versionCode
         )
-        clonedAppDao.insert(entity)
+        val dbId = clonedAppDao.insert(entity)
+        LogManager.i("Repo", "✓ Cloned ${appInfo.appName} (dbId=$dbId, user=$userId, gms=$gmsInstalled)")
+        dbId
     }
 
     fun launchApp(app: ClonedApp): Boolean = if (blackBoxEngine.isInitialized()) {
@@ -104,10 +121,12 @@ class AppRepository @Inject constructor(
 
     suspend fun deleteClone(id: Long) {
         val app = clonedAppDao.getAppById(id) ?: return
+        LogManager.i("Repo", "Deleting clone ${app.appName} (user=${app.userId})")
         if (blackBoxEngine.isInitialized()) blackBoxEngine.uninstallClone(app.clonePackage, app.userId)
         try { File(app.dataPath).deleteRecursively() } catch (_: Exception) {}
         if (app.hasShortcut) removeShortcut(app.toDomain())
         clonedAppDao.deleteById(id)
+        LogManager.i("Repo", "✓ Deleted ${app.appName}")
     }
 
     suspend fun updateCustomName(id: Long, name: String) { clonedAppDao.getAppById(id)?.let { clonedAppDao.update(it.copy(customName = name)) } }

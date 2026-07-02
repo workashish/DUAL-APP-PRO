@@ -9,14 +9,9 @@ import com.utility.toolbox.data.local.entity.LogEntry
 import com.utility.toolbox.service.LogManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -45,11 +40,6 @@ class LogViewerViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(LogViewerUiState())
     val uiState: StateFlow<LogViewerUiState> = _uiState.asStateFlow()
 
-    private val searchQuery = MutableStateFlow("")
-    private val selectedLevels = MutableStateFlow(setOf("E", "W", "I", "D"))
-    private val selectedTag = MutableStateFlow<String?>(null)
-    private val triggerRefresh = MutableStateFlow(0L) // used to force refresh
-
     init {
         loadLogs()
         loadTags()
@@ -57,72 +47,51 @@ class LogViewerViewModel @Inject constructor(
 
     private fun loadTags() {
         viewModelScope.launch {
-            LogManager.getAllTags().collectLatest { tags ->
+            LogManager.getAllTags().collect { tags ->
                 _uiState.update { it.copy(availableTags = tags) }
             }
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private fun loadLogs() {
         viewModelScope.launch {
-            // Combine all filter states into a single log flow
-            val logFlow = combine(
-                searchQuery,
-                selectedLevels,
-                selectedTag,
-                triggerRefresh
-            ) { query, levels, tag, _ ->
-                FilterParams(query, levels, tag)
-            }.flatMapLatest { params ->
-                val query = params.query.trim()
-                val levelsList = params.levels.toList().ifEmpty { listOf("E", "W", "I", "D", "V") }
-                val tag = params.tag
+            val state = _uiState.value
+            val query = state.searchQuery.trim()
+            val levels = state.selectedLevels
+            val tag = state.selectedTag
 
-                if (query.isBlank() && tag == null) {
-                    if (levelsList.size == 5) {
-                        LogManager.getAllLogs()
-                    } else {
-                        LogManager.getLogsByLevel(levelsList)
-                    }
-                } else if (tag != null) {
-                    LogManager.searchLogsFiltered(tag, levelsList)
-                } else {
-                    LogManager.searchLogsFiltered(query, levelsList)
-                }
+            val flow = when {
+                query.isNotBlank() && tag != null -> LogManager.searchLogsFiltered(query, levels.toList())
+                query.isNotBlank() -> LogManager.searchLogsFiltered(query, levels.toList())
+                tag != null -> LogManager.searchLogsFiltered(tag, levels.toList())
+                levels.size < 5 -> LogManager.getLogsByLevel(levels.toList())
+                else -> LogManager.getAllLogs()
             }
 
-            logFlow.collectLatest { logs ->
-                _uiState.update {
-                    it.copy(
-                        logs = logs,
-                        logCount = logs.size,
-                        isLoading = false
-                    )
-                }
+            flow.collect { logs ->
+                _uiState.update { it.copy(logs = logs, logCount = logs.size, isLoading = false) }
             }
         }
     }
 
     fun setSearchQuery(query: String) {
-        searchQuery.value = query
         _uiState.update { it.copy(searchQuery = query) }
+        loadLogs()
     }
 
     fun toggleLevel(level: String) {
-        selectedLevels.update { current ->
-            if (current.contains(level)) {
-                if (current.size > 1) current - level else current
-            } else {
-                current + level
-            }
+        _uiState.update { state ->
+            val newLevels = if (state.selectedLevels.contains(level)) {
+                if (state.selectedLevels.size > 1) state.selectedLevels - level else state.selectedLevels
+            } else state.selectedLevels + level
+            state.copy(selectedLevels = newLevels)
         }
-        _uiState.update { it.copy(selectedLevels = selectedLevels.value) }
+        loadLogs()
     }
 
     fun selectTag(tag: String?) {
-        selectedTag.value = tag
         _uiState.update { it.copy(selectedTag = tag) }
+        loadLogs()
     }
 
     fun setAutoScroll(enabled: Boolean) {
@@ -131,77 +100,36 @@ class LogViewerViewModel @Inject constructor(
 
     fun clearAllLogs() {
         LogManager.clearAllLogs()
-        triggerRefresh.value = System.currentTimeMillis()
-        _uiState.update {
-            it.copy(
-                snackbarMessage = "All logs cleared",
-                logs = emptyList(),
-                logCount = 0
-            )
-        }
+        _uiState.update { it.copy(snackbarMessage = "All logs cleared", logs = emptyList(), logCount = 0) }
     }
 
-    fun clearSnackbar() {
-        _uiState.update { it.copy(snackbarMessage = null) }
-    }
+    fun clearSnackbar() { _uiState.update { it.copy(snackbarMessage = null) } }
 
-    /** Export logs as a text file and share via Android share sheet. */
     fun shareLogs() {
         viewModelScope.launch {
             val logs = _uiState.value.logs
-            if (logs.isEmpty()) {
-                _uiState.update { it.copy(snackbarMessage = "No logs to share") }
-                return@launch
-            }
-
+            if (logs.isEmpty()) { _uiState.update { it.copy(snackbarMessage = "No logs to share") }; return@launch }
             try {
                 val text = LogManager.formatLogsForExport(logs)
                 val file = File(context.cacheDir, "dualspace_logs_${System.currentTimeMillis()}.txt")
                 file.writeText(text)
-
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    file
-                )
-
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, "DualSpace Logs")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    type = "text/plain"; putExtra(Intent.EXTRA_STREAM, uri); putExtra(Intent.EXTRA_SUBJECT, "DualSpace Logs")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                context.startActivity(
-                    Intent.createChooser(shareIntent, "Share Logs")
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                )
-
+                context.startActivity(Intent.createChooser(shareIntent, "Share Logs").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 _uiState.update { it.copy(snackbarMessage = "Logs exported (${logs.size} entries)") }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(snackbarMessage = "Export failed: ${e.message}") }
-            }
+            } catch (e: Exception) { _uiState.update { it.copy(snackbarMessage = "Export failed: ${e.message}") } }
         }
     }
 
-    /** Copy logs to clipboard. */
     fun copyToClipboard() {
         val logs = _uiState.value.logs
-        if (logs.isEmpty()) {
-            _uiState.update { it.copy(snackbarMessage = "No logs to copy") }
-            return
-        }
-
+        if (logs.isEmpty()) { _uiState.update { it.copy(snackbarMessage = "No logs to copy") }; return }
         val text = LogManager.formatLogsForExport(logs)
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val clip = android.content.ClipData.newPlainText("DualSpace Logs", text)
-        clipboard.setPrimaryClip(clip)
-        _uiState.update { it.copy(snackbarMessage = "${logs.size} log entries copied to clipboard") }
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("DualSpace Logs", text))
+        _uiState.update { it.copy(snackbarMessage = "${logs.size} log entries copied") }
     }
-
-    private data class FilterParams(
-        val query: String,
-        val levels: Set<String>,
-        val tag: String?
-    )
 }
