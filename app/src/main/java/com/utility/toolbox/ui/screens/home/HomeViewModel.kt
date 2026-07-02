@@ -43,12 +43,37 @@ class HomeViewModel @Inject constructor(
     init {
         _uiState.update { it.copy(blackBoxAvailable = blackBoxEngine.isInitialized(), isBubbleEnabled = BubbleService.isRunning(context)) }
         loadData()
+        startProcessMonitor()
     }
 
     private fun loadData() {
         viewModelScope.launch {
             appRepository.getAllClonedApps().collect { apps ->
                 _uiState.update { it.copy(clonedApps = apps, isLoading = false) }
+            }
+        }
+    }
+
+    /**
+     * Periodically check if clone processes are still running.
+     * Updates isRunning status in DB when a process dies.
+     */
+    private fun startProcessMonitor() {
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(5000)
+                try {
+                    val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                    val runningProcs = am.runningAppProcesses?.map { it.processName }?.toSet() ?: emptySet()
+                    val apps = _uiState.value.clonedApps
+                    for (app in apps) {
+                        val shouldBeRunning = runningProcs.any { it.contains(app.clonePackage) }
+                        if (app.isRunning && !shouldBeRunning) {
+                            appRepository.updateRunningStatus(app.id, false)
+                            LogManager.i("Home", "Process died: ${app.displayName}")
+                        }
+                    }
+                } catch (_: Exception) {}
             }
         }
     }
