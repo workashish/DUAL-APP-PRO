@@ -3,13 +3,10 @@ package com.utility.toolbox.service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
-import android.os.UserHandle
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import top.niunaijun.blackbox.BlackBoxCore
 import top.niunaijun.blackbox.entity.pm.InstallResult
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -100,69 +97,20 @@ class BlackBoxEngine @Inject constructor(
             if (r == null || !r.success) { LogManager.e("BlackBox", "Not installed, reinstall failed"); return false }
         }
 
-        // Strategy 1: am start --user via Runtime.exec (most reliable on OPPO)
-        if (launchViaAmStart(clonePackage, userId)) return true
-
-        // Strategy 2: BlackBox's internal launchApk (goes through proxy)
+        // Strategy 1: BlackBox's internal launchApk (goes through proxy)
         if (launchViaBlackBoxInternal(clonePackage, userId)) return true
 
-        // Strategy 3: Direct shadow intent with proper extras
+        // Strategy 2: Direct shadow intent with proper extras
         if (launchViaShadowIntent(clonePackage, userId)) return true
 
-        // Strategy 4: Real app fallback
-        LogManager.w("BlackBox", "All proxy methods failed — launching real app")
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage(clonePackage)
-            if (intent != null) { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); context.startActivity(intent) }
-        } catch (e: Exception) { LogManager.e("BlackBox", "Real app launch failed: ${e.message}") }
-        LogManager.i("BlackBox", "━━━ Complete ━━━")
-        return true
-    }
-
-    /**
-     * Strategy 1: Use Android's am command to start activity as target user.
-     * This bypasses BlackBox's proxy system entirely.
-     * am start --user N -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n pkg/activity
-     */
-    private fun launchViaAmStart(clonePackage: String, userId: Int): Boolean {
-        try {
-            // Resolve the launch activity
-            val intent = BlackBoxCore.getBPackageManager().getLaunchIntentForPackage(clonePackage, userId)
-            val component = intent?.component ?: run {
-                // Fallback: query from host PM
-                context.packageManager.getLaunchIntentForPackage(clonePackage)?.component
-            }
-            if (component == null) { LogManager.w("BlackBox", "[am] No launch component for $clonePackage"); return false }
-
-            val cmd = "am start --user $userId -n ${component.flattenToString()} -a android.intent.action.MAIN -c android.intent.category.LAUNCHER"
-            LogManager.i("BlackBox", "[am] Executing: $cmd")
-
-            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-            val exitCode = process.waitFor()
-            val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
-            val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
-
-            LogManager.i("BlackBox", "[am] exit=$exitCode, stdout=$stdout, stderr=$stderr")
-
-            if (exitCode == 0 && stdout.contains("Status: ok")) {
-                Thread.sleep(1500)
-                val top = getTopActivity()
-                val working = top.contains(clonePackage)
-                LogManager.i("BlackBox", "[am] Top=$top, working=$working")
-                if (working) {
-                    LogManager.i("BlackBox", "✓ Launched via am start --user")
-                    LogManager.i("BlackBox", "━━━ Complete ━━━")
-                    return true
-                }
-            }
-        } catch (e: Exception) {
-            LogManager.w("BlackBox", "[am] Failed: ${e.message}")
-        }
+        // NO REAL APP FALLBACK — show error instead
+        LogManager.e("BlackBox", "All proxy methods failed — clone cannot open in virtual environment")
+        LogManager.i("BlackBox", "━━━ Complete (failed) ━━━")
         return false
     }
 
     /**
-     * Strategy 2: Use BlackBox's internal launchApk which goes through the proxy system.
+     * Strategy 1: Use BlackBox's internal launchApk which goes through the proxy system.
      */
     private fun launchViaBlackBoxInternal(clonePackage: String, userId: Int): Boolean {
         try {
