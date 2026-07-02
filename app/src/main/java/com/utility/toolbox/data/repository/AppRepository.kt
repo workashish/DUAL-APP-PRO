@@ -129,6 +129,41 @@ class AppRepository @Inject constructor(
         LogManager.i("Repo", "✓ Deleted ${app.appName}")
     }
 
+    suspend fun resetDeviceInfo(appId: Long): Boolean {
+        val app = clonedAppDao.getAppById(appId) ?: return false
+        val newIdentity = blackBoxEngine.generateIdentity(app.userId)
+        clonedAppDao.update(app.copy(
+            androidId = newIdentity.androidId,
+            deviceModel = newIdentity.deviceModel,
+            deviceBrand = newIdentity.deviceBrand,
+            deviceFingerprint = newIdentity.deviceFingerprint,
+            deviceSerial = newIdentity.deviceSerial,
+            imei = newIdentity.imei,
+            macAddress = newIdentity.macAddress,
+            deviceInfoResetCount = app.deviceInfoResetCount + 1
+        ))
+        LogManager.i("Repo", "✓ Identity reset for ${app.appName} (user=${app.userId})")
+        return true
+    }
+
+    suspend fun resetGsfLicense(appId: Long): Boolean {
+        val app = clonedAppDao.getAppById(appId) ?: return false
+        val newIdentity = blackBoxEngine.generateIdentity(app.userId)
+        clonedAppDao.update(app.copy(
+            androidId = newIdentity.androidId,
+            gsfId = newIdentity.gsfId,
+            gsfResetCount = app.gsfResetCount + 1
+        ))
+        LogManager.i("Repo", "✓ GSF license reset for ${app.appName} (user=${app.userId})")
+        return true
+    }
+
+    suspend fun setCustomGsfLicense(appId: Long, customGsfId: String): Boolean {
+        val app = clonedAppDao.getAppById(appId) ?: return false
+        clonedAppDao.update(app.copy(gsfId = customGsfId, gsfResetCount = app.gsfResetCount + 1))
+        LogManager.i("Repo", "✓ Custom GSF set for ${app.appName}: $customGsfId")
+        return true
+    }
     suspend fun updateCustomName(id: Long, name: String) { clonedAppDao.getAppById(id)?.let { clonedAppDao.update(it.copy(customName = name)) } }
     suspend fun updateCustomIconColor(id: Long, color: Int) { clonedAppDao.getAppById(id)?.let { clonedAppDao.update(it.copy(customIconColor = color)) } }
     suspend fun updateShortcutStatus(id: Long, has: Boolean) { clonedAppDao.getAppById(id)?.let { clonedAppDao.update(it.copy(hasShortcut = has)) } }

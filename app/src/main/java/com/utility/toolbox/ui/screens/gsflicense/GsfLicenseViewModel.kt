@@ -29,16 +29,18 @@ class GsfLicenseViewModel @Inject constructor(private val appRepository: AppRepo
     fun resetLicense() {
         val app = _uiState.value.app ?: return
         viewModelScope.launch {
-            appRepository.updateCustomName(app.id, "")
-            _uiState.update { it.copy(currentGsfId = it.app?.gsfId) }
+            appRepository.resetGsfLicense(app.id)
+            val updated = appRepository.getClonedApp(app.id)
+            _uiState.update { it.copy(app = updated, currentGsfId = updated?.gsfId) }
         }
     }
 
     fun setCustomLicense(gsfId: String) {
         val app = _uiState.value.app ?: return
         viewModelScope.launch {
-            appRepository.updateCustomName(app.id, "")
-            _uiState.update { it.copy(currentGsfId = gsfId) }
+            appRepository.setCustomGsfLicense(app.id, gsfId)
+            val updated = appRepository.getClonedApp(app.id)
+            _uiState.update { it.copy(app = updated, currentGsfId = updated?.gsfId) }
         }
     }
 }

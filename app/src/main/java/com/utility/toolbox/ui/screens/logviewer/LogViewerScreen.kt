@@ -73,6 +73,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import com.utility.toolbox.data.local.entity.LogEntry
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -253,11 +257,22 @@ fun LogViewerScreen(
                         items = state.logs,
                         key = { it.id }
                     ) { entry ->
+                        val dateFmt = remember { SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US) }
+                        val timeStr = remember(entry.timestamp) { dateFmt.format(java.util.Date(entry.timestamp)) }
+                        val clipboard = LocalClipboardManager.current
+                        val scope = rememberCoroutineScope()
                         LogEntryCard(
                             entry = entry,
                             isExpanded = expandedEntryId == entry.id,
                             onClick = {
                                 expandedEntryId = if (expandedEntryId == entry.id) null else entry.id
+                            },
+                            onLongClick = {
+                                val text = "$timeStr ${entry.level} [${entry.tag}] ${entry.message}"
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Copied to clipboard")
+                                }
                             }
                         )
                     }
@@ -387,7 +402,8 @@ private fun LevelChip(label: String, name: String, isSelected: Boolean, onToggle
 private fun LogEntryCard(
     entry: LogEntry,
     isExpanded: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val levelColor = when (entry.level) {
         "V" -> Color(0xFF9E9E9E)
@@ -412,7 +428,7 @@ private fun LogEntryCard(
             .animateContentSize()
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = onClick
+                onLongClick = onLongClick
             ),
         shape = RoundedCornerShape(6.dp),
         colors = CardDefaults.cardColors(containerColor = bgColor),

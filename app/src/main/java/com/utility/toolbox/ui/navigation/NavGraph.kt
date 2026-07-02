@@ -49,7 +49,8 @@ fun NavGraph(
             LaunchedEffect(appId) { vm.loadApp(appId) }
             if (state.isLoading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             else state.app?.let { app ->
-                DeviceInfoScreen(app = app, deviceIdentity = null, onBack = { navController.popBackStack() }, onResetDeviceInfo = { }, onResetGsf = { })
+                DeviceInfoScreen(app = app, deviceIdentity = null, onBack = { navController.popBackStack() },
+                    onResetDeviceInfo = { vm.resetDeviceInfo() }, onResetGsf = { vm.resetGsf() })
             }
         }
 
@@ -60,7 +61,8 @@ fun NavGraph(
             LaunchedEffect(appId) { vm.loadApp(appId) }
             if (state.isLoading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             else state.app?.let { app ->
-                GsfLicenseScreen(app = app, currentGsfId = state.currentGsfId, onBack = { navController.popBackStack() }, onResetLicense = { vm.resetLicense() }, onSetLicense = { _, id -> vm.setCustomLicense(id) })
+                GsfLicenseScreen(app = app, currentGsfId = state.currentGsfId, onBack = { navController.popBackStack() },
+                    onResetLicense = { vm.resetLicense() }, onSetLicense = { _, id -> vm.setCustomLicense(id) })
             }
         }
 

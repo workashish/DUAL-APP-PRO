@@ -155,7 +155,7 @@ class HomeViewModel @Inject constructor(
     fun resetDeviceInfo(app: ClonedApp) {
         LogManager.i("Identity", "Resetting identity for ${app.displayName}")
         viewModelScope.launch {
-            appRepository.updateCustomName(app.id, "")
+            appRepository.resetDeviceInfo(app.id)
             LogManager.i("Identity", "✓ Identity reset for ${app.displayName}")
             _uiState.update { it.copy(snackbarMessage = "Identity reset for ${app.displayName}") }
         }

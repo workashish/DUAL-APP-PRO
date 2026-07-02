@@ -12,6 +12,7 @@ import dagger.hilt.android.HiltAndroidApp
 import top.niunaijun.blackbox.BlackBoxCore
 import top.niunaijun.blackbox.app.configuration.AppLifecycleCallback
 import top.niunaijun.blackbox.app.configuration.ClientConfiguration
+import java.io.File
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -78,23 +79,32 @@ class DualAppsApp : Application() {
     }
 
     /**
-     * Detect if we're running inside a BlackBox child process (proxy, black server).
-     * Only used to skip HOST-SIDE init (LogManager, notifications) in child processes.
-     * attachBaseContext() still runs for ALL processes.
+     * Detect if we're running inside a BlackBox child process.
+     * Uses multiple detection methods for reliability.
      */
     private fun isBlackBoxChildProcess(): Boolean {
         return try {
-            val procName = getProcName()
-            procName.contains(":p") || procName.contains(":black") ||
-                    procName.contains(":assist") || procName.contains(":provider")
+            // Method 1: Check process name from cmdline
+            val cmdline = File("/proc/self/cmdline").readText().trim('\u0000')
+            if (cmdline.contains(":p") || cmdline.contains(":black") ||
+                cmdline.contains(":assist") || cmdline.contains(":provider")) {
+                return true
+            }
+            // Method 2: Check current process name
+            val pid = android.os.Process.myPid()
+            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+            val procName = am.runningAppProcesses?.firstOrNull { it.pid == pid }?.processName
+            if (procName != null && procName != packageName) {
+                return true
+            }
+            // Method 3: Check if we're in a different process than the host
+            android.os.Process.myPid() != android.os.Process.myUid()
         } catch (_: Exception) { false }
     }
 
     private fun getProcName(): String {
         return try {
-            val pid = android.os.Process.myPid()
-            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
-            am.runningAppProcesses?.firstOrNull { it.pid == pid }?.processName ?: packageName
+            File("/proc/self/cmdline").readText().trim('\u0000')
         } catch (_: Exception) { packageName }
     }
 
