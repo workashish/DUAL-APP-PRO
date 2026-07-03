@@ -24,3 +24,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "DualSpace"
 include(":app")
+include(":NewBlackbox:Bcore")
+include(":NewBlackbox:black-reflection")
+include(":NewBlackbox:compiler")

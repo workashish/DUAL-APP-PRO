@@ -148,17 +148,10 @@ dependencies {
     // ─────────────────────────────────────────────────────────────────────
     // BlackBox Virtual Engine
     //
-    // Real BlackBox AAR built from: https://github.com/ALEX5402/NewBlackbox
-    // Module: Bcore (namespace: top.niunaijun.blackbox)
-    // Native lib: libblackbox.so (arm64-v8a + armeabi-v7a)
-    //
-    // Contains:
-    //   - Proxy activities/services/providers (auto-merged into manifest)
-    //   - FreeReflection + BlackReflection (hidden API bypass)
-    //   - Native hooks for PackageManager, ActivityManager, TelephonyManager
-    //   - Per-user virtual environment (device ID spoofing, process isolation)
-    // ───────────────────────────────────────────────────────────────────
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+    // Real BlackBox modules
+    implementation(project(":NewBlackbox:Bcore"))
+    implementation(project(":NewBlackbox:black-reflection"))
+    // implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
 
     // Testing
     testImplementation("junit:junit:4.13.2")
