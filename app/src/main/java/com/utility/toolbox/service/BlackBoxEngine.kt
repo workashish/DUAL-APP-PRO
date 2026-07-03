@@ -156,9 +156,10 @@ class BlackBoxEngine @Inject constructor(
             // Create shadow intent with proper extras matching ProxyActivityRecord format
             val proxyClass = Class.forName("top.niunaijun.blackbox.proxy.ProxyActivity\$P0")
             val shadow = Intent(context, proxyClass).apply {
-                putExtra("_B|_activity_info_", activityInfo as android.os.Parcelable)
-                putExtra("_B|_target_", launchIntent as android.os.Parcelable)
-                putExtra("_B|_user_id_", userId)
+                putExtra("_B_|_activity_info_", activityInfo as android.os.Parcelable)
+                putExtra("_B_|_target_", launchIntent as android.os.Parcelable)
+                putExtra("_B_|_user_id_", userId)
+                // activityRecord binder is optional — ProxyActivityRecord.create() handles null
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
 
